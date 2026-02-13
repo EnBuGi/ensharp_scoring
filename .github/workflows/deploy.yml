@@ -60,14 +60,14 @@ jobs:
           port: 22
           script: |
             # 1. 최신 이미지 다운로드
-            docker pull ${{ secrets.DOCKER_USERNAME }}/oj-worker:latest
+            sudo docker pull ${{ secrets.DOCKER_USERNAME }}/oj-worker:latest
 
             # 2. 기존 컨테이너 중지 및 삭제 (에러 무시)
-            docker stop oj-worker || true
-            docker rm oj-worker || true
+            sudo docker stop oj-worker || true
+            sudo docker rm oj-worker || true
 
             # 3. 새 컨테이너 실행 (DooD 설정 포함)
-            docker run -d \
+            sudo docker run -d \
               --name oj-worker \
               --restart always \
               -e SPRING_PROFILES_ACTIVE=prod \
@@ -78,4 +78,4 @@ jobs:
               ${{ secrets.DOCKER_USERNAME }}/oj-worker:latest
 
             # 4. 안 쓰는 구버전 이미지 정리 (디스크 공간 확보)
-            docker image prune -f
+            sudo docker image prune -f
