@@ -1,18 +1,22 @@
 package ensharp_scoring.example.ensharp_scoring.domain.model;
 
-import lombok.AllArgsConstructor;
 import lombok.Builder;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
-import lombok.ToString;
 
-@Getter
 @Builder
-@ToString
-@NoArgsConstructor
-@AllArgsConstructor
-public class SubmissionInfo {
-    private Long id;
-    private String repoUrl;
-    private String testCaseUrl;
+public record SubmissionInfo(
+        String id,
+        String repoUrl,
+        String testCaseUrl) {
+
+    public SubmissionInfo {
+        if (id == null || id.isBlank()) {
+            throw new IllegalArgumentException("Submission ID cannot be empty");
+        }
+        if (repoUrl == null || repoUrl.isBlank()) {
+            throw new IllegalArgumentException("Repository URL cannot be empty");
+        }
+        if (testCaseUrl == null || testCaseUrl.isBlank()) {
+            throw new IllegalArgumentException("Test Case URL cannot be empty");
+        }
+    }
 }

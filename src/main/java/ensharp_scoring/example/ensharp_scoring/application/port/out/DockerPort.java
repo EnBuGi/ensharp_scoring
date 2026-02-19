@@ -7,5 +7,5 @@ public interface DockerPort {
     /**
      * @return ExecutionResult (ExitCode, StandardOutput, ErrorOutput)
      */
-    ContainerResult execute(Path directory, String containerName);
+    ContainerResult execute(Path directory, String submissionId);
 }
