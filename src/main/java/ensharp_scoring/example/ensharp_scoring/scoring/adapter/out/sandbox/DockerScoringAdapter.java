@@ -26,6 +26,12 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         long timeoutMs = request.getTimeLimitMs() + 3000;
 
         try {
+            // Create results directory so Docker can mount it without creating it as a root-owned directory
+            File resultsDir = new File("/tmp/results/" + request.getSubmissionId());
+            if (!resultsDir.exists()) {
+                resultsDir.mkdirs();
+            }
+
             List<String> command = buildDockerCommand(request);
             
             ProcessBuilder pb = new ProcessBuilder(command);

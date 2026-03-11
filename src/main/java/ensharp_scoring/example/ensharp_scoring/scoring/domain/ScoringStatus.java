@@ -6,5 +6,6 @@ public enum ScoringStatus {
     MLE,
     RE,
     WA,
+    EE,
     AC
 }
