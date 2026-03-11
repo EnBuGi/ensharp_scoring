@@ -42,14 +42,14 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
             
             if (!finished) {
                 process.destroyForcibly();
-                return buildFallbackResult(request.getSubmissionId(), ScoringStatus.TLE);
+                return buildFallbackResult(request.getSubmissionId(), ScoringStatus.TIME_LIMIT_EXCEEDED);
             }
 
             int exitCode = process.exitValue();
             
             // OOM 에러 확인 (도커 exit code 137)
             if (exitCode == 137) {
-                return buildFallbackResult(request.getSubmissionId(), ScoringStatus.MLE);
+                return buildFallbackResult(request.getSubmissionId(), ScoringStatus.MEMORY_LIMIT_EXCEEDED);
             }
 
             // 테스트 결과가 저장될 XML 파일
@@ -57,9 +57,9 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
             
             if (!resultXmlFile.exists()) {
                 if (exitCode != 0) {
-                    return buildFallbackResult(request.getSubmissionId(), ScoringStatus.CE);
+                    return buildFallbackResult(request.getSubmissionId(), ScoringStatus.COMPILE_ERROR);
                 } else {
-                    return buildFallbackResult(request.getSubmissionId(), ScoringStatus.RE);
+                    return buildFallbackResult(request.getSubmissionId(), ScoringStatus.RUNTIME_ERROR);
                 }
             }
 
@@ -70,7 +70,7 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
             Thread.currentThread().interrupt();
             throw new ScoringException("Scoring process was interrupted", e);
         } catch (Exception e) {
-            return buildFallbackResult(request.getSubmissionId(), ScoringStatus.RE);
+            return buildFallbackResult(request.getSubmissionId(), ScoringStatus.RUNTIME_ERROR);
         }
     }
 

@@ -17,6 +17,8 @@ public class JGitAdapter implements FetchSourceCodePort {
             Git.cloneRepository()
                     .setURI(repoUrl)
                     .setDirectory(destination.toFile())
+                    .setCloneAllBranches(false)
+                    .setDepth(1)
                     .call()
                     .close();
         } catch (GitAPIException e) {

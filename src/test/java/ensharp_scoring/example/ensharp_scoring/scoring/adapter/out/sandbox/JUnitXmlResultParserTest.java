@@ -43,7 +43,7 @@ class JUnitXmlResultParserTest {
 
         // Then
         assertThat(result.getSubmissionId()).isEqualTo("sub-123");
-        assertThat(result.getOverallStatus()).isEqualTo(ScoringStatus.WA);
+        assertThat(result.getOverallStatus()).isEqualTo(ScoringStatus.WRONG_ANSWER);
         assertThat(result.getTotalTests()).isEqualTo(3);
         assertThat(result.getPassedTests()).isEqualTo(2);
         assertThat(result.getDetails()).hasSize(3);
@@ -75,7 +75,7 @@ class JUnitXmlResultParserTest {
 
         // Then
         assertThat(result.getSubmissionId()).isEqualTo("sub-456");
-        assertThat(result.getOverallStatus()).isEqualTo(ScoringStatus.AC);
+        assertThat(result.getOverallStatus()).isEqualTo(ScoringStatus.ACCEPTED);
         assertThat(result.getTotalTests()).isEqualTo(2);
         assertThat(result.getPassedTests()).isEqualTo(2);
         assertThat(result.getDetails()).hasSize(2);

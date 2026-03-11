@@ -90,11 +90,11 @@ public class JUnitXmlResultParser {
         ScoringStatus status;
         
         if (hasFailures) {
-            status = ScoringStatus.WA;
+            status = ScoringStatus.WRONG_ANSWER;
         } else if (exitCode != 0) {
-            status = ScoringStatus.RE;
+            status = ScoringStatus.RUNTIME_ERROR;
         } else {
-            status = ScoringStatus.AC;
+            status = ScoringStatus.ACCEPTED;
         }
 
         return ScoringResult.builder()

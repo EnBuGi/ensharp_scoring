@@ -66,7 +66,7 @@ class ScoringServiceTest {
         ScoringRequest request = createScoringRequest();
         ScoringResult mockResult = ScoringResult.builder()
                 .submissionId("sub-123")
-                .overallStatus(ScoringStatus.AC)
+                .overallStatus(ScoringStatus.ACCEPTED)
                 .build();
 
         given(executeScoringPort.execute(request)).willReturn(mockResult);
@@ -104,7 +104,7 @@ class ScoringServiceTest {
         ScoringResult publishedResult = resultCaptor.getValue();
         
         assertThat(publishedResult.getSubmissionId()).isEqualTo("sub-123");
-        assertThat(publishedResult.getOverallStatus()).isEqualTo(ScoringStatus.RE);
+        assertThat(publishedResult.getOverallStatus()).isEqualTo(ScoringStatus.RUNTIME_ERROR);
     }
 
     @Test
@@ -124,6 +124,6 @@ class ScoringServiceTest {
         ScoringResult publishedResult = resultCaptor.getValue();
         
         assertThat(publishedResult.getSubmissionId()).isEqualTo("sub-123");
-        assertThat(publishedResult.getOverallStatus()).isEqualTo(ScoringStatus.EE);
+        assertThat(publishedResult.getOverallStatus()).isEqualTo(ScoringStatus.EXECUTION_ERROR);
     }
 }

@@ -54,7 +54,7 @@ public class ScoringService implements ScoreSubmissionUseCase {
             log.error("Scoring process failed for submission: {}", submissionId, e);
             ScoringResult errorResult = ScoringResult.builder()
                 .submissionId(submissionId)
-                .overallStatus(ScoringStatus.RE)
+                .overallStatus(ScoringStatus.RUNTIME_ERROR)
                 .totalTests(0)
                 .passedTests(0)
                 .details(Collections.emptyList())
@@ -64,7 +64,7 @@ public class ScoringService implements ScoreSubmissionUseCase {
             log.error("Unexpected error during scoring for submission: {}", submissionId, e);
             ScoringResult errorResult = ScoringResult.builder()
                 .submissionId(submissionId)
-                .overallStatus(ScoringStatus.EE)
+                .overallStatus(ScoringStatus.EXECUTION_ERROR)
                 .totalTests(0)
                 .passedTests(0)
                 .details(Collections.emptyList())
