@@ -23,7 +23,7 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
     @Override
     public ScoringResult execute(ScoringRequest request) {
         // 프로세스 단의 타임아웃 계산 (문제의 timeLimit + 버퍼 시간)
-        long timeoutMs = request.getTimeLimitMs() + 3000;
+        long timeoutMs = request.getTimeLimit() + 3000;
 
         File resultsDir = new File("/tmp/results/" + request.getSubmissionId());
 
@@ -89,7 +89,7 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         command.add("--rm");
         
         // 동적 자원 제한 (메시지로 전달된 memoryLimit 사용)
-        command.add("--memory=" + request.getMemoryLimitMb() + "m");
+        command.add("--memory=" + request.getMemoryLimit() + "m");
         
         // 도커 보안 정책 강화 설정
         command.add("--network=none"); // 네트워크 단절

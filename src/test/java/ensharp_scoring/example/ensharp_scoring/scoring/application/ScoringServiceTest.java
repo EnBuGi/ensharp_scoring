@@ -53,9 +53,9 @@ class ScoringServiceTest {
         return ScoringRequest.builder()
                 .submissionId("sub-123")
                 .repoUrl("https://github.com/repo")
-                .testCaseUrl("https://s3/test.zip")
-                .timeLimitMs(2000L)
-                .memoryLimitMb(512)
+                .testCodeUrl("https://s3/test.zip")
+                .timeLimit(2000L)
+                .memoryLimit(512)
                 .build();
     }
 

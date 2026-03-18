@@ -22,9 +22,9 @@ public class OracleStorageAdapter implements FetchTestCasePort {
     private final HttpClient httpClient = HttpClient.newHttpClient();
 
     @Override
-    public void fetch(String testCaseUrl, Path destination) {
+    public void fetch(String testCodeUrl, Path destination) {
         HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(testCaseUrl))
+                .uri(URI.create(testCodeUrl))
                 .timeout(java.time.Duration.ofSeconds(30))
                 .GET()
                 .build();

@@ -42,7 +42,7 @@ public class ScoringService implements ScoreSubmissionUseCase {
             fetchSourceCodePort.fetch(request.getRepoUrl(), workspaceDir);
             
             // 3. 테스트 케이스 다운로드 및 압축 해제
-            fetchTestCasePort.fetch(request.getTestCaseUrl(), workspaceDir);
+            fetchTestCasePort.fetch(request.getTestCodeUrl(), workspaceDir);
             
             // 4. 채점(도커) 실행
             ScoringResult result = executeScoringPort.execute(request);
