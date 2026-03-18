@@ -25,9 +25,11 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         // 프로세스 단의 타임아웃 계산 (문제의 timeLimit + 버퍼 시간)
         long timeoutMs = request.getTimeLimitMs() + 3000;
 
+        File resultsDir = new File("/tmp/results/" + request.getSubmissionId());
+
         try {
             // Create results directory so Docker can mount it without creating it as a root-owned directory
-            File resultsDir = new File("/tmp/results/" + request.getSubmissionId());
+
             if (!resultsDir.exists()) {
                 resultsDir.mkdirs();
             }
@@ -71,6 +73,12 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
             throw new ScoringException("Scoring process was interrupted", e);
         } catch (Exception e) {
             return buildFallbackResult(request.getSubmissionId(), ScoringStatus.RUNTIME_ERROR);
+        } finally {
+            try {
+                org.springframework.util.FileSystemUtils.deleteRecursively(resultsDir);
+            } catch (Exception ignored) {
+                // Ignore cleanup errors
+            }
         }
     }
 

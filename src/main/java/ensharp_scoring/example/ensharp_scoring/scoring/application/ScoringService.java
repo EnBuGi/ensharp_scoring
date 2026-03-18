@@ -70,6 +70,12 @@ public class ScoringService implements ScoreSubmissionUseCase {
                 .details(Collections.emptyList())
                 .build();
             publishScoringResultPort.publish(errorResult);
+        } finally {
+            try {
+                org.springframework.util.FileSystemUtils.deleteRecursively(workspaceDir);
+            } catch (Exception ignored) {
+                log.warn("Failed to delete workspace directory: {}", workspaceDir);
+            }
         }
     }
 
