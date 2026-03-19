@@ -2,8 +2,12 @@ package ensharp_scoring.example.ensharp_scoring.scoring.adapter.in.messaging.dto
 
 import ensharp_scoring.example.ensharp_scoring.scoring.domain.ScoringRequest;
 
+import java.util.UUID;
+
 public record ScoringRequestMessage(
         String submissionId,
+        UUID userId,
+        UUID projectId,
         String repoUrl,
         String testCodeUrl,
         Integer timeLimit,
