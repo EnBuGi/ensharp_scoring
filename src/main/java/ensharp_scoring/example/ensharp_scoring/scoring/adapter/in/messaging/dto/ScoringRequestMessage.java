@@ -1,25 +1,25 @@
 package ensharp_scoring.example.ensharp_scoring.scoring.adapter.in.messaging.dto;
 
-import lombok.Getter;
-import lombok.NoArgsConstructor;
 import ensharp_scoring.example.ensharp_scoring.scoring.domain.ScoringRequest;
 
-@Getter
-@NoArgsConstructor
-public class ScoringRequestMessage {
-    private String submissionId;
-    private String repoUrl;
-    private String testCaseUrl;
-    private long timeLimitMs;
-    private int memoryLimitMb;
+import java.util.UUID;
 
+public record ScoringRequestMessage(
+        String submissionId,
+        UUID userId,
+        UUID projectId,
+        String repoUrl,
+        String testCodeUrl,
+        Integer timeLimit,
+        Integer memoryLimit
+) {
     public ScoringRequest toDomain() {
-        return ScoringRequest.builder()
-                .submissionId(submissionId)
-                .repoUrl(repoUrl)
-                .testCaseUrl(testCaseUrl)
-                .timeLimitMs(timeLimitMs)
-                .memoryLimitMb(memoryLimitMb)
-                .build();
+        return new ScoringRequest(
+                submissionId,
+                repoUrl,
+                testCodeUrl,
+                timeLimit != null ? timeLimit.longValue() : 1000L,
+                memoryLimit != null ? memoryLimit : 128
+        );
     }
 }
