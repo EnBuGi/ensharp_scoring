@@ -103,8 +103,13 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         command.add("-v"); 
         command.add("/tmp/results/" + request.getSubmissionId() + ":/results");
         
-        // 도커 허용 라이브러리가 캐싱된 최적화 Base Image
-        command.add("enbug-grading-base-image:latest");
+        // 프로젝트 타입별로 최적화된(의존성이 캐싱된) 베이스 이미지 사용
+        String baseImage = "enbug-grading-java-base-image:latest";
+        if ("SPRING".equalsIgnoreCase(request.getProjectType())) {
+            baseImage = "enbug-grading-spring-base-image:latest";
+        }
+        command.add(baseImage);
+
         
         command.add("gradle");
         command.add("test");

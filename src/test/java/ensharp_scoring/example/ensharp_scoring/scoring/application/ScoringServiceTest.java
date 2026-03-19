@@ -56,7 +56,9 @@ class ScoringServiceTest {
                 .testCodeUrl("https://s3/test.zip")
                 .timeLimit(2000L)
                 .memoryLimit(512)
+                .projectType("JAVA")
                 .build();
+
     }
 
     @Test

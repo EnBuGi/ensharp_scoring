@@ -44,13 +44,17 @@ public class ScoringService implements ScoreSubmissionUseCase {
             // 3. 테스트 케이스 다운로드 및 압축 해제
             fetchTestCasePort.fetch(request.getTestCodeUrl(), workspaceDir);
             
-            // 4. 채점(도커) 실행
+            // 4. build.gradle 생성 (멀티 템플릿 지원)
+            generateBuildGradle(workspaceDir, request.getProjectType());
+            
+            // 5. 채점(도커) 실행
             ScoringResult result = executeScoringPort.execute(request);
             
-            // 5. 채점 결과 발행
+            // 6. 채점 결과 발행
             publishScoringResultPort.publish(result);
             
         } catch (ScoringException e) {
+
             log.error("Scoring process failed for submission: {}", submissionId, e);
             ScoringResult errorResult = ScoringResult.builder()
                 .submissionId(submissionId)
@@ -79,4 +83,27 @@ public class ScoringService implements ScoreSubmissionUseCase {
         }
     }
 
+    private void generateBuildGradle(Path workspaceDir, String projectType) throws Exception {
+        Path buildGradlePath = workspaceDir.resolve("build.gradle");
+        
+        if (Files.exists(buildGradlePath)) {
+            log.info("build.gradle already exists in workspace, skipping generation.");
+            return;
+        }
+
+        String templatePath = "SPRING".equalsIgnoreCase(projectType) 
+                ? "templates/spring-build.gradle" 
+                : "templates/java-build.gradle";
+
+        try (var inputStream = new org.springframework.core.io.ClassPathResource(templatePath).getInputStream()) {
+            String template = org.springframework.util.StreamUtils.copyToString(inputStream, java.nio.charset.StandardCharsets.UTF_8);
+            Files.writeString(buildGradlePath, template);
+            log.info("Generated build.gradle for project type: {} using template: {}", projectType, templatePath);
+        } catch (Exception e) {
+            log.error("Failed to read build.gradle template: {}", templatePath, e);
+            throw new ScoringException("Failed to generate build.gradle from template: " + templatePath, e);
+        }
+    }
+
 }
+

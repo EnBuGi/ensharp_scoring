@@ -62,8 +62,9 @@ public class ScoringQueueListener {
         
         while (!Thread.currentThread().isInterrupted()) {
             try {
-                // block for up to 60 seconds
-                String payload = stringRedisTemplate.opsForList().leftPop(SUBMISSION_QUEUE, 60, TimeUnit.SECONDS);
+                // block for up to 30 seconds to stay well within default command timeouts
+                String payload = stringRedisTemplate.opsForList().leftPop(SUBMISSION_QUEUE, 30, TimeUnit.SECONDS);
+
                 if (payload != null) {
                     processMessage(payload, threadName);
                 }
