@@ -72,6 +72,8 @@ jobs:
               --restart always \
               -e SPRING_PROFILES_ACTIVE=prod \
               -e REDIS_HOST=${{ secrets.REDIS_HOST }} \
+              -e REDIS_PORT=${{ secrets.REDIS_PORT }} \
+              -e REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }} \
               -v /var/run/docker.sock:/var/run/docker.sock \
               -v /tmp/oj-work:/tmp/oj-work \
               -v /app/oj-data:/app/oj-data \
