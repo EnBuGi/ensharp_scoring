@@ -42,6 +42,9 @@ public class ScoringService implements ScoreSubmissionUseCase {
             fetchSourceCodePort.fetch(request.getRepoUrl(), workspaceDir);
             
             // 3. 테스트 케이스 다운로드 및 압축 해제
+            if (request.getTestCodeUrl() == null || request.getTestCodeUrl().isBlank()) {
+                throw new ScoringException("Test case URL is missing for submission: " + submissionId);
+            }
             fetchTestCasePort.fetch(request.getTestCodeUrl(), workspaceDir);
             
             // 4. build.gradle 생성 (멀티 템플릿 지원)
