@@ -125,16 +125,21 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         command.add("-v"); 
         command.add("/tmp/results/" + request.getSubmissionId() + ":/results");
         
+        // 작업 디렉토리 설정
+        command.add("-w");
+        command.add("/workspace");
+        
         // 프로젝트 타입별로 최적화된(의존성이 캐싱된) 베이스 이미지 사용
         String baseImage = "enbug-grading-java-base-image:latest";
         if ("SPRING".equalsIgnoreCase(request.getProjectType())) {
             baseImage = "enbug-grading-spring-base-image:latest";
         }
         command.add(baseImage);
-
         
         command.add("gradle");
         command.add("test");
+        // Gradle 홈 디렉토리를 볼륨 내로 설정하여 Read-Only 환경에서도 캐시 쓰기 가능하게 함
+        command.add("-Dgradle.user.home=/workspace/.gradle");
         
         return command;
     }
