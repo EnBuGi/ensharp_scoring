@@ -124,11 +124,16 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         // --offline 플래그로 네트워크 없이 캐시 사용 강제
         command.add("sh");
         command.add("-c");
-        command.add("chmod -R 777 /home/gradle/.gradle && " +
-                   "ls -la /home/gradle/app && " +
-                   "echo '--- Gradle Version ---' && gradle --version && " +
-                   "echo '--- Cache Size ---' && du -sh /home/gradle/.gradle && " +
-                   "echo '--- Cache Content (Lombok) ---' && find /home/gradle/.gradle -name \"*lombok*\" | head -n 20 && " +
+        command.add("echo '--- Runtime Environment ---' && " +
+                   "id && echo \"HOME: $HOME\" && echo \"USER: $(whoami)\" && " +
+                   "ls -la /home/gradle && " +
+                   "echo '--- Cache Size ---' && " +
+                   "du -sh /home/gradle/.gradle || true && " +
+                   "du -sh /root/.gradle || true && " +
+                   "echo '--- Cache Content (Lombok) ---' && " +
+                   "find /home/gradle/.gradle -name \"*lombok*\" 2>/dev/null | head -n 10 || true && " +
+                   "find /root/.gradle -name \"*lombok*\" 2>/dev/null | head -n 10 || true && " +
+                   "chmod -R 777 /home/gradle/.gradle || true && " +
                    "export GRADLE_USER_HOME=/home/gradle/.gradle && " +
                    "export GRADLE_OPTS='-Xmx64m -Dorg.gradle.native=false -Dorg.gradle.vfs.watch=false -Dorg.gradle.daemon=false -Dorg.gradle.welcome=never' && " +
                    "gradle test --no-daemon --offline -Dorg.gradle.native=false -Dorg.gradle.vfs.watch=false -Dorg.gradle.daemon=false -Dorg.gradle.welcome=never");

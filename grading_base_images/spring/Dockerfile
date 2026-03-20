@@ -29,4 +29,11 @@ dependencies {
 }
 EOF
 
-RUN gradle classes testClasses --no-daemon && rm -rf *
+# Add dummy source to ensure dependencies are actually downloaded and indexed
+RUN mkdir -p src/main/java/com/example src/test/java/com/example && \
+    echo "package com.example; import lombok.Data; @Data public class Dummy {}" > src/main/java/com/example/Dummy.java && \
+    echo "package com.example; import org.junit.jupiter.api.Test; import org.springframework.boot.test.context.SpringBootTest; @SpringBootTest(classes = Dummy.class) public class DummyTest { @Test void contextLoads() {} }" > src/test/java/com/example/DummyTest.java && \
+    echo "package com.example; import org.springframework.boot.autoconfigure.SpringBootApplication; @SpringBootApplication public class DummyApp {}" > src/main/java/com/example/DummyApp.java && \
+    gradle classes testClasses --no-daemon && \
+    gradle dependencies --no-daemon && \
+    rm -rf src build.gradle
