@@ -38,6 +38,7 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
             }
 
             List<String> command = buildDockerCommand(request);
+            log.info("[DockerScoringAdapter] Executing Docker command: {}", String.join(" ", command));
             
             ProcessBuilder pb = new ProcessBuilder(command);
             pb.redirectErrorStream(true);
@@ -91,9 +92,11 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
             return resultParser.parse(request.getSubmissionId(), resultXmlFile, exitCode);
             
         } catch (InterruptedException e) {
+            log.error("[DockerScoringAdapter] Interrupted during scoring", e);
             Thread.currentThread().interrupt();
             throw new ScoringException("Scoring process was interrupted", e);
         } catch (Exception e) {
+            log.error("[DockerScoringAdapter] Critical error during execution for submission: {}", request.getSubmissionId(), e);
             return buildFallbackResult(request.getSubmissionId(), ScoringStatus.RUNTIME_ERROR);
         } finally {
             try {
