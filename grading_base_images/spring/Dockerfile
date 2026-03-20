@@ -24,4 +24,4 @@ dependencies {
 }
 EOF
 
-RUN gradle classes testClasses --no-daemon -Dorg.gradle.vfs.watch=false && rm -rf *
+RUN gradle classes testClasses --no-daemon -Dorg.gradle.native=false -Dorg.gradle.vfs.watch=false && rm -rf *
