@@ -104,7 +104,7 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         command.add(containerName);
         command.add("--memory=" + request.getMemoryLimit() + "m");
         command.add("--network=none");
-        command.add("--pids-limit=64");
+        command.add("--pids-limit=1024");
         command.add("--cap-drop=ALL");
         command.add("-w");
         command.add("/home/gradle");
@@ -121,13 +121,13 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         
         // 실행 명령 (start -a 시 실행됨)
         // ls -la 로 파일 존재 여부 확인
-        // GRADLE_OPTS 환경변수로 네이티브 서비스 비활성화 강제
+        // GRADLE_OPTS 환경변수로 네이티브 서비스 비활성화 및 메모리 제한 강제
         command.add("sh");
         command.add("-c");
         command.add("ls -la /home/gradle && " +
                    "export GRADLE_USER_HOME=/tmp/.gradle && " +
-                   "export GRADLE_OPTS='-Dorg.gradle.native=false -Dorg.gradle.vfs.watch=false -Dorg.gradle.daemon=false' && " +
-                   "gradle test --no-daemon -Dorg.gradle.native=false -Dorg.gradle.vfs.watch=false -Dorg.gradle.daemon=false");
+                   "export GRADLE_OPTS='-Xmx64m -Dorg.gradle.native=false -Dorg.gradle.vfs.watch=false -Dorg.gradle.daemon=false -Dorg.gradle.welcome=never' && " +
+                   "gradle test --no-daemon -Dorg.gradle.native=false -Dorg.gradle.vfs.watch=false -Dorg.gradle.daemon=false -Dorg.gradle.welcome=never");
         
         return command;
     }
