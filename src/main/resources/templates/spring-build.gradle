@@ -33,4 +33,8 @@ dependencies {
 
 tasks.named('test') {
     useJUnitPlatform()
+    reports {
+        junitXml.required = true
+        junitXml.outputLocation = file('/results')
+    }
 }
