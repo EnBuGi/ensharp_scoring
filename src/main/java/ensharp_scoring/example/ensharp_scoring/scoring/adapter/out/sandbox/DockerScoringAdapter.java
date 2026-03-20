@@ -7,13 +7,16 @@ import ensharp_scoring.example.ensharp_scoring.scoring.domain.ScoringStatus;
 import ensharp_scoring.example.ensharp_scoring.scoring.domain.exception.ScoringException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
+import lombok.extern.slf4j.Slf4j;
 
-import java.io.File;    
+import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class DockerScoringAdapter implements ExecuteScoringPort {
@@ -40,14 +43,33 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
             pb.redirectErrorStream(true);
             
             Process process = pb.start();
+            
+            // Capture process output in a separate thread to avoid blocking
+            java.util.concurrent.CompletableFuture<String> outputFuture = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                try (java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(process.getInputStream()))) {
+                    StringBuilder sb = new StringBuilder();
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        log.info("[DockerOutput] {}", line);
+                        sb.append(line).append("\n");
+                    }
+                    return sb.toString();
+                } catch (IOException e) {
+                    log.error("[DockerOutput] Error reading process output", e);
+                    return "";
+                }
+            });
+
             boolean finished = process.waitFor(timeoutMs, TimeUnit.MILLISECONDS);
             
             if (!finished) {
                 process.destroyForcibly();
+                log.warn("[DockerScoring] Process timed out for submission: {}", request.getSubmissionId());
                 return buildFallbackResult(request.getSubmissionId(), ScoringStatus.TIME_LIMIT_EXCEEDED);
             }
 
             int exitCode = process.exitValue();
+            log.info("[DockerScoring] Process exited with code: {} for submission: {}", exitCode, request.getSubmissionId());
             
             // OOM 에러 확인 (도커 exit code 137)
             if (exitCode == 137) {
