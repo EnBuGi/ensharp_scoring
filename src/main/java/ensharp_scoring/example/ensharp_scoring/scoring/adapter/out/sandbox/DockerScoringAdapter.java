@@ -138,7 +138,7 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
     private void runCommand(List<String> command) throws IOException, InterruptedException {
         ProcessBuilder pb = new ProcessBuilder(command);
         Process process = pb.start();
-        boolean finished = process.waitFor(30, TimeUnit.SECONDS);
+        boolean finished = process.waitFor(300, TimeUnit.SECONDS);
         if (!finished || process.exitValue() != 0) {
             if (!finished) process.destroyForcibly();
             log.warn("[DockerCommand] Command failed or timed out: {}", String.join(" ", command));
