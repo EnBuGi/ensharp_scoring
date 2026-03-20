@@ -125,16 +125,11 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         command.add("sh");
         command.add("-c");
         command.add("echo '--- Runtime Environment ---' && " +
-                   "id && echo \"HOME: $HOME\" && echo \"USER: $(whoami)\" && " +
-                   "ls -la /home/gradle && " +
-                   "echo '--- Cache Size ---' && " +
-                   "du -sh /home/gradle/.gradle || true && " +
-                   "du -sh /root/.gradle || true && " +
-                   "echo '--- Cache Content (Lombok) ---' && " +
-                   "find /home/gradle/.gradle -name \"*lombok*\" 2>/dev/null | head -n 10 || true && " +
-                   "find /root/.gradle -name \"*lombok*\" 2>/dev/null | head -n 10 || true && " +
-                   "chmod -R 777 /home/gradle/.gradle || true && " +
-                   "export GRADLE_USER_HOME=/home/gradle/.gradle && " +
+                   "id && echo \"GRADLE_USER_HOME: /opt/gradle-cache\" && " +
+                   "echo '--- Cache Size (/opt/gradle-cache) ---' && " +
+                   "du -sh /opt/gradle-cache || true && " +
+                   "chmod -R 777 /opt/gradle-cache || true && " +
+                   "export GRADLE_USER_HOME=/opt/gradle-cache && " +
                    "export GRADLE_OPTS='-Xmx64m -Dorg.gradle.native=false -Dorg.gradle.vfs.watch=false -Dorg.gradle.daemon=false -Dorg.gradle.welcome=never' && " +
                    "gradle test --no-daemon --offline -Dorg.gradle.native=false -Dorg.gradle.vfs.watch=false -Dorg.gradle.daemon=false -Dorg.gradle.welcome=never");
         

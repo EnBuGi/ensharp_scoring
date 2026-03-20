@@ -1,13 +1,13 @@
 FROM gradle:8.7-jdk21
 
 USER root
-RUN apt-get update && apt-get install -y libstdc++6 && rm -rf /var/lib/apt/lists/*
+RUN mkdir -p /opt/gradle-cache && chown gradle:gradle /opt/gradle-cache
 USER gradle
-
 
 WORKDIR /workspace
 
-ENV GRADLE_USER_HOME=/home/gradle/.gradle
+# Use a non-volume directory for the cache to prevent data loss during build
+ENV GRADLE_USER_HOME=/opt/gradle-cache
 
 # Pre-cache common dependencies by running a dummy build
 COPY <<EOF build.gradle
