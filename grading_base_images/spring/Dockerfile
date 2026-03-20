@@ -1,4 +1,4 @@
-FROM gradle:8.7-jdk21-alpine
+FROM gradle:8.7-jdk21
 
 WORKDIR /workspace
 
@@ -24,4 +24,4 @@ dependencies {
 }
 EOF
 
-RUN gradle classes testClasses --no-daemon -Dorg.gradle.native=false -Dorg.gradle.vfs.watch=false && rm -rf *
+RUN gradle classes testClasses --no-daemon && rm -rf *
