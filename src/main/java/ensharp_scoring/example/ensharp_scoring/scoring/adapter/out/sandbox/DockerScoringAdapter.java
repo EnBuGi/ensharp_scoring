@@ -105,7 +105,6 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         command.add("--memory=" + request.getMemoryLimit() + "m");
         command.add("--network=none");
         command.add("--pids-limit=1024");
-        command.add("--cap-drop=ALL");
         command.add("-w");
         command.add("/home/gradle");
         
