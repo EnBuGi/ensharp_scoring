@@ -6,11 +6,14 @@ import ensharp_scoring.example.ensharp_scoring.scoring.domain.ScoringResult;
 import ensharp_scoring.example.ensharp_scoring.scoring.domain.ScoringStatus;
 import ensharp_scoring.example.ensharp_scoring.scoring.domain.exception.ScoringException;
 import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Component;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
 
+import java.io.BufferedReader;
 import java.io.File;
-import java.io.IOException;
+import java.io.InputStreamReader;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -25,128 +28,157 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
 
     @Override
     public ScoringResult execute(ScoringRequest request) {
-        // 프로세스 단의 타임아웃 계산 (문제의 timeLimit + 버퍼 시간)
-        long timeoutMs = request.getTimeLimit() + 3000;
-
-        File resultsDir = new File("/tmp/results/" + request.getSubmissionId());
+        String submissionId = request.getSubmissionId();
+        String containerName = "sandbox-" + submissionId;
+        long timeoutMs = request.getTimeLimit() + 5000;
+        
+        File resultsDir = new File("/tmp/results/" + submissionId);
+        if (!resultsDir.exists()) {
+            resultsDir.mkdirs();
+        }
 
         try {
-            // Create results directory so Docker can mount it without creating it as a root-owned directory
+            // 1. 컨테이너 생성 (실행은 하지 않음)
+            log.info("[DockerScoring] Step 1: Creating container {}", containerName);
+            runCommand(buildCreateCommand(request, containerName));
 
-            if (!resultsDir.exists()) {
-                resultsDir.mkdirs();
-            }
+            // 2. 워크스페이스 파일 복사 (Docker CP 사용 - 볼륨 마운트 이슈 해결)
+            log.info("[DockerScoring] Step 2: Copying workspace to container");
+            String workspacePath = "/tmp/workspace/" + submissionId + "/.";
+            runCommand(List.of("docker", "cp", workspacePath, containerName + ":/home/gradle/"));
 
-            List<String> command = buildDockerCommand(request);
-            log.info("[DockerScoringAdapter] Executing Docker command: {}", String.join(" ", command));
-            
-            ProcessBuilder pb = new ProcessBuilder(command);
-            pb.redirectErrorStream(true);
-            
-            Process process = pb.start();
-            
-            // Capture process output in a separate thread to avoid blocking
-            java.util.concurrent.CompletableFuture<String> outputFuture = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
-                try (java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(process.getInputStream()))) {
-                    StringBuilder sb = new StringBuilder();
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        log.info("[DockerOutput] {}", line);
-                        sb.append(line).append("\n");
-                    }
-                    return sb.toString();
-                } catch (IOException e) {
-                    log.error("[DockerOutput] Error reading process output", e);
-                    return "";
-                }
-            });
+            // 3. 권한 설정 (복사된 파일의 소유권을 gradle 유저로 변경)
+            log.info("[DockerScoring] Step 3: Setting permissions in container");
+            runCommand(List.of("docker", "start", containerName)); // 임시 시작
+            runCommand(List.of("docker", "exec", "-u", "root", containerName, "chown", "-R", "gradle:gradle", "/home/gradle"));
+            runCommand(List.of("docker", "stop", containerName));
 
-            boolean finished = process.waitFor(timeoutMs, TimeUnit.MILLISECONDS);
-            
-            if (!finished) {
-                process.destroyForcibly();
-                log.warn("[DockerScoring] Process timed out for submission: {}", request.getSubmissionId());
-                return buildFallbackResult(request.getSubmissionId(), ScoringStatus.TIME_LIMIT_EXCEEDED);
-            }
+            // 4. 컨테이너 실행 및 채점 (로그 캡처)
+            log.info("[DockerScoring] Step 4: Running grading task");
+            DockerExecutionResult runResult = runCaptureOutput(List.of("docker", "start", "-a", containerName), timeoutMs);
+            log.info("[DockerScoring] Grading process finished with exit code: {}", runResult.exitCode);
 
-            int exitCode = process.exitValue();
-            log.info("[DockerScoring] Process exited with code: {} for submission: {}", exitCode, request.getSubmissionId());
-            
-            // OOM 에러 확인 (도커 exit code 137)
-            if (exitCode == 137) {
-                return buildFallbackResult(request.getSubmissionId(), ScoringStatus.MEMORY_LIMIT_EXCEEDED);
-            }
-
-            // 테스트 결과가 저장될 XML 파일
-            File resultXmlFile = new File("/tmp/results/" + request.getSubmissionId() + "/test-results.xml");
-            
-            if (!resultXmlFile.exists()) {
-                if (exitCode != 0) {
-                    return buildFallbackResult(request.getSubmissionId(), ScoringStatus.COMPILE_ERROR);
-                } else {
-                    return buildFallbackResult(request.getSubmissionId(), ScoringStatus.RUNTIME_ERROR);
-                }
-            }
-
-            // XML 파싱을 통한 구체적 성공 / 실패 판별 로직 호출
-            return resultParser.parse(request.getSubmissionId(), resultXmlFile, exitCode);
-            
-        } catch (InterruptedException e) {
-            log.error("[DockerScoringAdapter] Interrupted during scoring", e);
-            Thread.currentThread().interrupt();
-            throw new ScoringException("Scoring process was interrupted", e);
-        } catch (Exception e) {
-            log.error("[DockerScoringAdapter] Critical error during execution for submission: {}", request.getSubmissionId(), e);
-            return buildFallbackResult(request.getSubmissionId(), ScoringStatus.RUNTIME_ERROR);
-        } finally {
+            // 5. 결과 파일 추출
+            log.info("[DockerScoring] Step 5: Extracting results from container");
+            // XML 파일 경로 (Gradle 기본 경로: build/test-results/test/TEST-*.xml)
+            // 템플릿의 소스 구조를 고려할 때 build/test-results/test/test-results.xml 로 생성되도록 유도 (혹은 패턴 매칭)
+            // 여기서는 build.gradle 설정에 의해 생성됨
             try {
-                org.springframework.util.FileSystemUtils.deleteRecursively(resultsDir);
-            } catch (Exception ignored) {
-                // Ignore cleanup errors
+                runCommand(List.of("docker", "cp", containerName + ":/home/gradle/build/test-results/test/.", resultsDir.getAbsolutePath()));
+            } catch (Exception e) {
+                log.warn("[DockerScoring] Failed to extract XML results. Maybe tests failed to run? {}", e.getMessage());
             }
+
+            // OOM 또는 타임아웃 처리
+            if (runResult.exitCode == 137) {
+                return buildFallbackResult(submissionId, ScoringStatus.MEMORY_LIMIT_EXCEEDED);
+            }
+            if (runResult.timedOut) {
+                return buildFallbackResult(submissionId, ScoringStatus.TIME_LIMIT_EXCEEDED);
+            }
+
+            // 6. 결과 파싱
+            File resultXmlFile = new File(resultsDir, "test-results.xml");
+            if (!resultXmlFile.exists()) {
+                // 특정 파일이 없으면 디렉토리 내의 첫 번째 XML 파일을 찾아봄
+                File[] xmlFiles = resultsDir.listFiles((dir, name) -> name.endsWith(".xml"));
+                if (xmlFiles != null && xmlFiles.length > 0) {
+                    resultXmlFile = xmlFiles[0];
+                }
+            }
+
+            if (!resultXmlFile.exists()) {
+                log.warn("[DockerScoring] No XML results found for submission: {}", submissionId);
+                return buildFallbackResult(submissionId, runResult.exitCode == 0 ? ScoringStatus.RUNTIME_ERROR : ScoringStatus.COMPILE_ERROR);
+            }
+
+            return resultParser.parse(submissionId, resultXmlFile, runResult.exitCode);
+
+        } catch (Exception e) {
+            log.error("[DockerScoring] Critical error for submission: {}", submissionId, e);
+            return buildFallbackResult(submissionId, ScoringStatus.RUNTIME_ERROR);
+        } finally {
+            // 7. 클린업
+            log.info("[DockerScoring] Step 7: Cleaning up container and local results");
+            try {
+                runCommand(List.of("docker", "rm", "-f", containerName));
+                org.springframework.util.FileSystemUtils.deleteRecursively(resultsDir);
+            } catch (Exception ignored) {}
         }
     }
 
-    private List<String> buildDockerCommand(ScoringRequest request) {
+    private List<String> buildCreateCommand(ScoringRequest request, String containerName) {
         List<String> command = new ArrayList<>();
         command.add("docker");
-        command.add("run");
-        command.add("--rm");
-        
-        // 동적 자원 제한 (메시지로 전달된 memoryLimit 사용)
+        command.add("create");
+        command.add("--name");
+        command.add(containerName);
         command.add("--memory=" + request.getMemoryLimit() + "m");
-        
-        // 도커 보안 정책 강화 설정
-        command.add("--network=none"); // 네트워크 단절
-        command.add("--pids-limit=64"); // 포크 폭탄 방지
-        command.add("--cap-drop=ALL"); // 루트 권한 등 불필요 권한 회수
-        
-        // 필요한 볼륨만 마운트
-        command.add("-v"); 
-        command.add("/tmp/workspace/" + request.getSubmissionId() + ":/workspace");
-        command.add("-v"); 
-        command.add("/tmp/results/" + request.getSubmissionId() + ":/results");
-        
-        // 작업 디렉토리 설정
+        command.add("--network=none");
+        command.add("--pids-limit=64");
+        command.add("--cap-drop=ALL");
         command.add("-w");
-        command.add("/workspace");
+        command.add("/home/gradle");
         
-        // 프로젝트 타입별로 최적화된(의존성이 캐싱된) 베이스 이미지 사용
         String baseImage = "huri0906/enbug-grading-java-base-image:latest";
         if ("SPRING".equalsIgnoreCase(request.getProjectType())) {
             baseImage = "huri0906/enbug-grading-spring-base-image:latest";
         }
         command.add(baseImage);
         
-        // 샌드박스 내부에서 실제 파일 구조를 확인하기 위해 ls 포함 (디버깅)
-        // -Dgradle.user.home은 /workspace가 아닌 컨테이너 기본 홈(/home/gradle)을 사용하여 권한 이슈 방지
-        command.add("sh");
-        command.add("-c");
-        command.add("ls -la /workspace && gradle test " +
-                "-Dorg.gradle.native=false " +
-                "-Dorg.gradle.vfs.watch=false");
+        // 실행 명령 (start -a 시 실행됨)
+        // --no-daemon 필수로 추가 (네이티브 라이브러리 충돌 최소화)
+        command.add("gradle");
+        command.add("test");
+        command.add("--no-daemon");
+        command.add("-Dorg.gradle.native=false");
+        command.add("-Dorg.gradle.vfs.watch=false");
         
         return command;
+    }
+
+    private void runCommand(List<String> command) throws IOException, InterruptedException {
+        ProcessBuilder pb = new ProcessBuilder(command);
+        Process process = pb.start();
+        boolean finished = process.waitFor(30, TimeUnit.SECONDS);
+        if (!finished || process.exitValue() != 0) {
+            if (!finished) process.destroyForcibly();
+            log.warn("[DockerCommand] Command failed or timed out: {}", String.join(" ", command));
+        }
+    }
+
+    private DockerExecutionResult runCaptureOutput(List<String> command, long timeoutMs) throws IOException, InterruptedException {
+        ProcessBuilder pb = new ProcessBuilder(command);
+        pb.redirectErrorStream(true);
+        Process process = pb.start();
+
+        StringBuilder sb = new StringBuilder();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                log.info("[DockerOutput] {}", line);
+                sb.append(line).append("\n");
+            }
+        }
+
+        boolean finished = process.waitFor(timeoutMs, TimeUnit.MILLISECONDS);
+        if (!finished) {
+            process.destroyForcibly();
+            return new DockerExecutionResult(137, true, sb.toString());
+        }
+        return new DockerExecutionResult(process.exitValue(), false, sb.toString());
+    }
+
+    private static class DockerExecutionResult {
+        int exitCode;
+        boolean timedOut;
+        String output;
+
+        DockerExecutionResult(int exitCode, boolean timedOut, String output) {
+            this.exitCode = exitCode;
+            this.timedOut = timedOut;
+            this.output = output;
+        }
     }
 
     private ScoringResult buildFallbackResult(String submissionId, ScoringStatus status) {
