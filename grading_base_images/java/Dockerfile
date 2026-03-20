@@ -1,13 +1,13 @@
 FROM gradle:8.7-jdk21
 
 USER root
-RUN mkdir -p /opt/gradle-cache && chown gradle:gradle /opt/gradle-cache
+RUN mkdir -p /gradle-user-home-cache && chown gradle:gradle /gradle-user-home-cache
 USER gradle
 
 WORKDIR /workspace
 
-# Use a non-volume directory for the cache to prevent data loss during build
-ENV GRADLE_USER_HOME=/opt/gradle-cache
+# Use a custom home directory that is NOT a volume
+ENV GRADLE_USER_HOME=/gradle-user-home-cache
 
 # Pre-cache common dependencies by running a dummy build
 COPY <<EOF build.gradle

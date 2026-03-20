@@ -112,9 +112,9 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         command.add("--user");
         command.add("root");
         
-        String baseImage = "huri0906/enbug-grading-java-base-image:latest";
+        String baseImage = "huri0906/enbug-grading-java-base-image:v2";
         if ("SPRING".equalsIgnoreCase(request.getProjectType())) {
-            baseImage = "huri0906/enbug-grading-spring-base-image:latest";
+            baseImage = "huri0906/enbug-grading-spring-base-image:v2";
         }
         command.add(baseImage);
         
@@ -125,11 +125,11 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         command.add("sh");
         command.add("-c");
         command.add("echo '--- Runtime Environment ---' && " +
-                   "id && echo \"GRADLE_USER_HOME: /opt/gradle-cache\" && " +
-                   "echo '--- Cache Size (/opt/gradle-cache) ---' && " +
-                   "du -sh /opt/gradle-cache || true && " +
-                   "chmod -R 777 /opt/gradle-cache || true && " +
-                   "export GRADLE_USER_HOME=/opt/gradle-cache && " +
+                   "id && echo \"GRADLE_USER_HOME: /gradle-user-home-cache\" && " +
+                   "echo '--- Cache Size (/gradle-user-home-cache) ---' && " +
+                   "du -sh /gradle-user-home-cache || true && " +
+                   "chmod -R 777 /gradle-user-home-cache || true && " +
+                   "export GRADLE_USER_HOME=/gradle-user-home-cache && " +
                    "export GRADLE_OPTS='-Xmx64m -Dorg.gradle.native=false -Dorg.gradle.vfs.watch=false -Dorg.gradle.daemon=false -Dorg.gradle.welcome=never' && " +
                    "gradle test --no-daemon --offline -Dorg.gradle.native=false -Dorg.gradle.vfs.watch=false -Dorg.gradle.daemon=false -Dorg.gradle.welcome=never");
         
