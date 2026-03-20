@@ -1,5 +1,10 @@
 FROM gradle:8.7-jdk21
 
+USER root
+RUN apt-get update && apt-get install -y libstdc++6 && rm -rf /var/lib/apt/lists/*
+USER gradle
+
+
 WORKDIR /workspace
 
 # Pre-cache common dependencies by running a dummy build
