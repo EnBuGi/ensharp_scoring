@@ -50,8 +50,8 @@ public class ScoringService implements ScoreSubmissionUseCase {
             fetchTestCasePort.fetch(request.getTestCodeUrl(), workspaceDir);
             log.info("[ScoringService] Successfully fetched test cases");
             
-            // 4. build.gradle 생성 (멀티 템플릿 지원)
-            generateBuildGradle(workspaceDir, request.getProjectType());
+            // 4. Gradle 빌드 파일 생성 (멀티 템플릿 지원)
+            generateGradleFiles(workspaceDir, request.getProjectType());
             
             // [Debug] 워크스페이스 구조 확인
             log.info("[ScoringService] Workspace structure for {}:", submissionId);
@@ -95,9 +95,17 @@ public class ScoringService implements ScoreSubmissionUseCase {
         }
     }
 
-    private void generateBuildGradle(Path workspaceDir, String projectType) throws Exception {
+    private void generateGradleFiles(Path workspaceDir, String projectType) throws Exception {
         Path buildGradlePath = workspaceDir.resolve("build.gradle");
+        Path settingsGradlePath = workspaceDir.resolve("settings.gradle");
+
+        // 1. settings.gradle 생성 (Gradle 8.7+ 필수)
+        if (!Files.exists(settingsGradlePath)) {
+            Files.writeString(settingsGradlePath, "rootProject.name = 'submission'\n");
+            log.info("Generated settings.gradle in workspace.");
+        }
         
+        // 2. build.gradle 생성
         if (Files.exists(buildGradlePath)) {
             log.info("build.gradle already exists in workspace, skipping generation.");
             return;
