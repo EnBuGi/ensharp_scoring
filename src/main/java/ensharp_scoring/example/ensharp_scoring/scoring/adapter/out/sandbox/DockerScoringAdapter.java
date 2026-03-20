@@ -43,7 +43,7 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
             // 2. 워크스페이스 파일 복사 (Docker socket을 통해 직접 전송)
             log.info("[DockerScoring] Step 2: Copying workspace to container");
             String workspacePath = "/tmp/workspace/" + submissionId + "/.";
-            runCommand(List.of("docker", "cp", workspacePath, containerName + ":/home/gradle/"));
+            runCommand(List.of("docker", "cp", workspacePath, containerName + ":/home/gradle/app/"));
 
             // 3. 실행 및 채점 (로그 캡처)
             // --user root 로 실행하므로 별도의 chown 과정 없이 바로 실행 가능
@@ -54,7 +54,7 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
             // 4. 결과 파일 추출
             log.info("[DockerScoring] Step 4: Extracting results from container");
             try {
-                runCommand(List.of("docker", "cp", containerName + ":/home/gradle/build/test-results/test/.", resultsDir.getAbsolutePath()));
+                runCommand(List.of("docker", "cp", containerName + ":/home/gradle/app/build/test-results/test/.", resultsDir.getAbsolutePath()));
             } catch (Exception e) {
                 log.warn("[DockerScoring] Failed to extract XML results. Maybe tests failed to run? {}", e.getMessage());
             }
@@ -106,7 +106,7 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         command.add("--network=none");
         command.add("--pids-limit=1024");
         command.add("-w");
-        command.add("/home/gradle");
+        command.add("/home/gradle/app");
         
         // root 사용자로 실행하여 권한 문제 해결
         command.add("--user");
@@ -125,7 +125,7 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         command.add("sh");
         command.add("-c");
         command.add("chmod -R 777 /home/gradle/.gradle && " +
-                   "ls -la /home/gradle && " +
+                   "ls -la /home/gradle/app && " +
                    "export GRADLE_USER_HOME=/home/gradle/.gradle && " +
                    "export GRADLE_OPTS='-Xmx64m -Dorg.gradle.native=false -Dorg.gradle.vfs.watch=false -Dorg.gradle.daemon=false -Dorg.gradle.welcome=never' && " +
                    "gradle test --no-daemon --offline -Dorg.gradle.native=false -Dorg.gradle.vfs.watch=false -Dorg.gradle.daemon=false -Dorg.gradle.welcome=never");
