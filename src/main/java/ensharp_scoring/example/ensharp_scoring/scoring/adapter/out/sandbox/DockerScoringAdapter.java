@@ -112,10 +112,9 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         command.add("--user");
         command.add("root");
         
-        String baseImage = "huri0906/enbug-grading-java-base-image:v2";
-        if ("SPRING".equalsIgnoreCase(request.getProjectType())) {
-            baseImage = "huri0906/enbug-grading-spring-base-image:v2";
-        }
+        String baseImage = request.getProjectType().equalsIgnoreCase("SPRING_BOOT")
+                ? "huri0906/enbug-grading-spring-base-image:v3"
+                : "huri0906/enbug-grading-java-base-image:v3";
         command.add(baseImage);
         
         // 실행 명령 (start -a 시 실행됨)

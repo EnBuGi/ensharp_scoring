@@ -35,7 +35,8 @@ EOF
 RUN mkdir -p src/main/java/com/example src/test/java/com/example && \
     echo "package com.example; import lombok.Data; @Data public class Dummy {}" > src/main/java/com/example/Dummy.java && \
     echo "package com.example; import org.junit.jupiter.api.Test; import org.springframework.boot.test.context.SpringBootTest; @SpringBootTest(classes = Dummy.class) public class DummyTest { @Test void contextLoads() {} }" > src/test/java/com/example/DummyTest.java && \
-    echo "package com.example; import org.springframework.boot.autoconfigure.SpringBootApplication; @SpringBootApplication public class DummyApp {}" > src/main/java/com/example/DummyApp.java && \
-    gradle classes testClasses --no-daemon && \
-    gradle dependencies --no-daemon && \
+    echo "--- Build Time: Population (v3) ---" && \
+    gradle test --no-daemon --info && \
+    echo "--- Build Time: Cache Size ---" && \
+    du -sh /gradle-user-home-cache && \
     rm -rf src build.gradle

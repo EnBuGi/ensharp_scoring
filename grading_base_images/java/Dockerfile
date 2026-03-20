@@ -31,13 +31,8 @@ EOF
 RUN mkdir -p src/main/java/com/example src/test/java/com/example && \
     echo "package com.example; import lombok.Data; @Data public class Dummy {}" > src/main/java/com/example/Dummy.java && \
     echo "package com.example; import org.junit.jupiter.api.Test; public class DummyTest { @Test void test() {} }" > src/test/java/com/example/DummyTest.java && \
-    echo "--- Build Time: Population ---" && \
-    gradle classes testClasses --no-daemon --info && \
-    gradle dependencies --no-daemon && \
+    echo "--- Build Time: Population (v3) ---" && \
+    gradle test --no-daemon --info && \
     echo "--- Build Time: Cache Verification ---" && \
-    echo "User: $(whoami)" && \
-    echo "Home: $HOME" && \
-    echo "GRADLE_USER_HOME: $GRADLE_USER_HOME" && \
-    du -sh /home/gradle/.gradle || true && \
-    du -sh ~/.gradle || true && \
+    du -sh /gradle-user-home-cache && \
     rm -rf src build.gradle
