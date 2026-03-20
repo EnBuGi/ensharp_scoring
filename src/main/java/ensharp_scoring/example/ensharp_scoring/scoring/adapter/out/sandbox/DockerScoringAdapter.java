@@ -138,10 +138,13 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         }
         command.add(baseImage);
         
-        command.add("gradle");
-        command.add("test");
-        // Gradle 홈 디렉토리를 볼륨 내로 설정하여 Read-Only 환경에서도 캐시 쓰기 가능하게 함
-        command.add("-Dgradle.user.home=/workspace/.gradle");
+        // 샌드박스 내부에서 실제 파일 구조를 확인하기 위해 ls 포함 (디버깅)
+        // -Dgradle.user.home은 /workspace가 아닌 컨테이너 기본 홈(/home/gradle)을 사용하여 권한 이슈 방지
+        command.add("sh");
+        command.add("-c");
+        command.add("ls -la /workspace && gradle test " +
+                "-Dorg.gradle.native=false " +
+                "-Dorg.gradle.vfs.watch=false");
         
         return command;
     }
