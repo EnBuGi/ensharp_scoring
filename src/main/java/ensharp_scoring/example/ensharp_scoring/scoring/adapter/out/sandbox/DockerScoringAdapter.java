@@ -119,7 +119,6 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         // 도커 보안 정책 강화 설정
         command.add("--network=none"); // 네트워크 단절
         command.add("--pids-limit=64"); // 포크 폭탄 방지
-        command.add("--read-only"); // 호스트 권한 보호를 위한 Read-Only 파일 시스템
         command.add("--cap-drop=ALL"); // 루트 권한 등 불필요 권한 회수
         
         // 필요한 볼륨만 마운트

@@ -53,10 +53,19 @@ public class ScoringService implements ScoreSubmissionUseCase {
             // 4. Gradle 빌드 파일 생성 (멀티 템플릿 지원)
             generateGradleFiles(workspaceDir, request.getProjectType());
             
-            // [Debug] 워크스페이스 구조 확인
-            log.info("[ScoringService] Workspace structure for {}:", submissionId);
+            // [Debug] 워크스페이스 구조 확인 및 권한 설정
+            log.info("[ScoringService] Setting 777 permissions and logging workspace for {}:", submissionId);
             try (java.util.stream.Stream<Path> paths = Files.walk(workspaceDir)) {
-                paths.forEach(p -> log.info("  - {}", workspaceDir.relativize(p)));
+                paths.forEach(p -> {
+                    try {
+                        p.toFile().setWritable(true, false);
+                        p.toFile().setReadable(true, false);
+                        p.toFile().setExecutable(true, false);
+                        log.info("  - {} (Perms set)", workspaceDir.relativize(p));
+                    } catch (Exception e) {
+                        log.warn("Failed to set permissions for: {}", p);
+                    }
+                });
             }
             
             // 5. 채점(도커) 실행
