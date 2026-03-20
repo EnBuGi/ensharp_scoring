@@ -133,9 +133,9 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         command.add("/workspace");
         
         // 프로젝트 타입별로 최적화된(의존성이 캐싱된) 베이스 이미지 사용
-        String baseImage = "enbug-grading-java-base-image:latest";
+        String baseImage = "huri0906/enbug-grading-java-base-image:latest";
         if ("SPRING".equalsIgnoreCase(request.getProjectType())) {
-            baseImage = "enbug-grading-spring-base-image:latest";
+            baseImage = "huri0906/enbug-grading-spring-base-image:latest";
         }
         command.add(baseImage);
         
