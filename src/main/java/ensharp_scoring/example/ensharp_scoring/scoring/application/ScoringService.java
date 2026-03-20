@@ -114,7 +114,16 @@ public class ScoringService implements ScoreSubmissionUseCase {
             log.info("Generated settings.gradle in workspace.");
         }
         
-        // 2. build.gradle 생성
+        // 2. gradle.properties 생성 (네이티브 서비스 비활성화)
+        Path gradlePropertiesPath = workspaceDir.resolve("gradle.properties");
+        if (!Files.exists(gradlePropertiesPath)) {
+            String propertiesContent = "org.gradle.native=false\n" +
+                                     "org.gradle.vfs.watch=false\n";
+            Files.writeString(gradlePropertiesPath, propertiesContent);
+            log.info("Generated gradle.properties in workspace.");
+        }
+
+        // 3. build.gradle 생성
         if (Files.exists(buildGradlePath)) {
             log.info("build.gradle already exists in workspace, skipping generation.");
             return;

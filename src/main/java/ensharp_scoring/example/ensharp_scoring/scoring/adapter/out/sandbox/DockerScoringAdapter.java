@@ -40,27 +40,19 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
             log.info("[DockerScoring] Step 1: Creating container {}", containerName);
             runCommand(buildCreateCommand(request, containerName));
 
-            // 2. 워크스페이스 파일 복사 (Docker CP 사용 - 볼륨 마운트 이슈 해결)
+            // 2. 워크스페이스 파일 복사 (Docker socket을 통해 직접 전송)
             log.info("[DockerScoring] Step 2: Copying workspace to container");
             String workspacePath = "/tmp/workspace/" + submissionId + "/.";
             runCommand(List.of("docker", "cp", workspacePath, containerName + ":/home/gradle/"));
 
-            // 3. 권한 설정 (복사된 파일의 소유권을 gradle 유저로 변경)
-            log.info("[DockerScoring] Step 3: Setting permissions in container");
-            runCommand(List.of("docker", "start", containerName)); // 임시 시작
-            runCommand(List.of("docker", "exec", "-u", "root", containerName, "chown", "-R", "gradle:gradle", "/home/gradle"));
-            runCommand(List.of("docker", "stop", containerName));
-
-            // 4. 컨테이너 실행 및 채점 (로그 캡처)
-            log.info("[DockerScoring] Step 4: Running grading task");
+            // 3. 실행 및 채점 (로그 캡처)
+            // --user root 로 실행하므로 별도의 chown 과정 없이 바로 실행 가능
+            log.info("[DockerScoring] Step 3: Running grading task (as root)");
             DockerExecutionResult runResult = runCaptureOutput(List.of("docker", "start", "-a", containerName), timeoutMs);
             log.info("[DockerScoring] Grading process finished with exit code: {}", runResult.exitCode);
 
-            // 5. 결과 파일 추출
-            log.info("[DockerScoring] Step 5: Extracting results from container");
-            // XML 파일 경로 (Gradle 기본 경로: build/test-results/test/TEST-*.xml)
-            // 템플릿의 소스 구조를 고려할 때 build/test-results/test/test-results.xml 로 생성되도록 유도 (혹은 패턴 매칭)
-            // 여기서는 build.gradle 설정에 의해 생성됨
+            // 4. 결과 파일 추출
+            log.info("[DockerScoring] Step 4: Extracting results from container");
             try {
                 runCommand(List.of("docker", "cp", containerName + ":/home/gradle/build/test-results/test/.", resultsDir.getAbsolutePath()));
             } catch (Exception e) {
@@ -75,10 +67,9 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
                 return buildFallbackResult(submissionId, ScoringStatus.TIME_LIMIT_EXCEEDED);
             }
 
-            // 6. 결과 파싱
+            // 5. 결과 파싱
             File resultXmlFile = new File(resultsDir, "test-results.xml");
             if (!resultXmlFile.exists()) {
-                // 특정 파일이 없으면 디렉토리 내의 첫 번째 XML 파일을 찾아봄
                 File[] xmlFiles = resultsDir.listFiles((dir, name) -> name.endsWith(".xml"));
                 if (xmlFiles != null && xmlFiles.length > 0) {
                     resultXmlFile = xmlFiles[0];
@@ -96,8 +87,8 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
             log.error("[DockerScoring] Critical error for submission: {}", submissionId, e);
             return buildFallbackResult(submissionId, ScoringStatus.RUNTIME_ERROR);
         } finally {
-            // 7. 클린업
-            log.info("[DockerScoring] Step 7: Cleaning up container and local results");
+            // 6. 클린업 (컨테이너 삭제)
+            log.info("[DockerScoring] Step 6: Cleaning up container and local results");
             try {
                 runCommand(List.of("docker", "rm", "-f", containerName));
                 org.springframework.util.FileSystemUtils.deleteRecursively(resultsDir);
@@ -118,6 +109,10 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         command.add("-w");
         command.add("/home/gradle");
         
+        // root 사용자로 실행하여 권한 문제 해결
+        command.add("--user");
+        command.add("root");
+        
         String baseImage = "huri0906/enbug-grading-java-base-image:latest";
         if ("SPRING".equalsIgnoreCase(request.getProjectType())) {
             baseImage = "huri0906/enbug-grading-spring-base-image:latest";
@@ -125,12 +120,13 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         command.add(baseImage);
         
         // 실행 명령 (start -a 시 실행됨)
-        // --no-daemon 필수로 추가 (네이티브 라이브러리 충돌 최소화)
-        command.add("gradle");
-        command.add("test");
-        command.add("--no-daemon");
-        command.add("-Dorg.gradle.native=false");
-        command.add("-Dorg.gradle.vfs.watch=false");
+        // ls -la 로 파일 존재 여부 확인
+        // GRADLE_OPTS 환경변수로 네이티브 서비스 비활성화 강제
+        command.add("sh");
+        command.add("-c");
+        command.add("ls -la /home/gradle && " +
+                   "export GRADLE_OPTS='-Dorg.gradle.native=false -Dorg.gradle.vfs.watch=false' && " +
+                   "gradle test --no-daemon -Dorg.gradle.native=false -Dorg.gradle.vfs.watch=false");
         
         return command;
     }
@@ -162,20 +158,17 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         boolean finished = process.waitFor(timeoutMs, TimeUnit.MILLISECONDS);
         if (!finished) {
             process.destroyForcibly();
-            return new DockerExecutionResult(137, true, sb.toString());
+            return new DockerExecutionResult(137, true);
         }
-        return new DockerExecutionResult(process.exitValue(), false, sb.toString());
+        return new DockerExecutionResult(process.exitValue(), false);
     }
 
     private static class DockerExecutionResult {
         int exitCode;
         boolean timedOut;
-        String output;
-
-        DockerExecutionResult(int exitCode, boolean timedOut, String output) {
+        DockerExecutionResult(int exitCode, boolean timedOut) {
             this.exitCode = exitCode;
             this.timedOut = timedOut;
-            this.output = output;
         }
     }
 
