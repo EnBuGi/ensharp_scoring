@@ -53,6 +53,12 @@ public class ScoringService implements ScoreSubmissionUseCase {
             // 4. build.gradle 생성 (멀티 템플릿 지원)
             generateBuildGradle(workspaceDir, request.getProjectType());
             
+            // [Debug] 워크스페이스 구조 확인
+            log.info("[ScoringService] Workspace structure for {}:", submissionId);
+            try (java.util.stream.Stream<Path> paths = Files.walk(workspaceDir)) {
+                paths.forEach(p -> log.info("  - {}", workspaceDir.relativize(p)));
+            }
+            
             // 5. 채점(도커) 실행
             ScoringResult result = executeScoringPort.execute(request);
             
