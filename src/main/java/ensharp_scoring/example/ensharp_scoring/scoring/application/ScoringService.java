@@ -114,14 +114,14 @@ public class ScoringService implements ScoreSubmissionUseCase {
             log.info("Generated settings.gradle in workspace.");
         }
         
-        // 2. gradle.properties 생성 (네이티브 서비스 비활성화 및 메모리 최적화)
+        // 2. gradle.properties 생성 (네이티브 서비스 비활성화, 메모리 최적화, 오프라인 모드용 캐시 사용)
         Path gradlePropertiesPath = workspaceDir.resolve("gradle.properties");
         if (!Files.exists(gradlePropertiesPath)) {
             String propertiesContent = "org.gradle.native=false\n" +
                                      "org.gradle.vfs.watch=false\n" +
                                      "org.gradle.daemon=false\n" +
-                                     "gradle.user.home=/tmp/.gradle\n" +
-                                     "org.gradle.jvmargs=-Xmx256m -XX:MaxMetaspaceSize=96m\n" +
+                                     "gradle.user.home=/home/gradle/.gradle\n" +
+                                     "org.gradle.jvmargs=-Xmx256m -XX:MaxMetaspaceSize=128m\n" +
                                      "org.gradle.welcome=never\n";
             Files.writeString(gradlePropertiesPath, propertiesContent);
             log.info("Generated gradle.properties in workspace.");

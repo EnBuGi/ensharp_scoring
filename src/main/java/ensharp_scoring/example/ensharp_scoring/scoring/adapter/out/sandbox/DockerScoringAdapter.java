@@ -121,13 +121,15 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         
         // 실행 명령 (start -a 시 실행됨)
         // ls -la 로 파일 존재 여부 확인
-        // GRADLE_OPTS 환경변수로 네이티브 서비스 비활성화 및 메모리 제한 강제
+        // chmod -R 777로 캐시 디렉토리 권한 부여 (root가 lock 파일을 생성할 수 있게 함)
+        // --offline 플래그로 네트워크 없이 캐시 사용 강제
         command.add("sh");
         command.add("-c");
-        command.add("ls -la /home/gradle && " +
-                   "export GRADLE_USER_HOME=/tmp/.gradle && " +
+        command.add("chmod -R 777 /home/gradle/.gradle && " +
+                   "ls -la /home/gradle && " +
+                   "export GRADLE_USER_HOME=/home/gradle/.gradle && " +
                    "export GRADLE_OPTS='-Xmx64m -Dorg.gradle.native=false -Dorg.gradle.vfs.watch=false -Dorg.gradle.daemon=false -Dorg.gradle.welcome=never' && " +
-                   "gradle test --no-daemon -Dorg.gradle.native=false -Dorg.gradle.vfs.watch=false -Dorg.gradle.daemon=false -Dorg.gradle.welcome=never");
+                   "gradle test --no-daemon --offline -Dorg.gradle.native=false -Dorg.gradle.vfs.watch=false -Dorg.gradle.daemon=false -Dorg.gradle.welcome=never");
         
         return command;
     }
