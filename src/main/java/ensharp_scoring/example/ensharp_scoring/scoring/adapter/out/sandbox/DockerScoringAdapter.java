@@ -126,7 +126,7 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         command.add("-c");
         command.add("ls -la /home/gradle && " +
                    "export GRADLE_OPTS='-Dorg.gradle.native=false -Dorg.gradle.vfs.watch=false' && " +
-                   "gradle test --no-daemon");
+                   "gradle test --no-daemon -Dorg.gradle.native=false -Dorg.gradle.vfs.watch=false");
         
         return command;
     }
