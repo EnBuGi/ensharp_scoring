@@ -118,7 +118,9 @@ public class ScoringService implements ScoreSubmissionUseCase {
         Path gradlePropertiesPath = workspaceDir.resolve("gradle.properties");
         if (!Files.exists(gradlePropertiesPath)) {
             String propertiesContent = "org.gradle.native=false\n" +
-                                     "org.gradle.vfs.watch=false\n";
+                                     "org.gradle.vfs.watch=false\n" +
+                                     "org.gradle.daemon=false\n" +
+                                     "gradle.user.home=/tmp/.gradle\n";
             Files.writeString(gradlePropertiesPath, propertiesContent);
             log.info("Generated gradle.properties in workspace.");
         }
