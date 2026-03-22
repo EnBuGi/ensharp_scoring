@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Collections;
+import java.io.IOException;
 
 import ensharp_scoring.example.ensharp_scoring.scoring.application.port.in.ScoreSubmissionUseCase;
 import ensharp_scoring.example.ensharp_scoring.scoring.application.port.out.ExecuteScoringPort;
@@ -41,16 +42,52 @@ public class ScoringService implements ScoreSubmissionUseCase {
             // 2. 깃허브 코드 클론
             fetchSourceCodePort.fetch(request.getRepoUrl(), workspaceDir);
             
+            // [New] 프로젝트 구조 유연화: src 폴더 위치 조정 (테스트 주입 전 수행)
+            adjustProjectStructure(workspaceDir);
+
             // 3. 테스트 케이스 다운로드 및 압축 해제
+            if (request.getTestCodeUrl() == null || request.getTestCodeUrl().isBlank()) {
+                log.error("[ScoringService] Test case URL is missing for submission: {}", submissionId);
+                throw new ScoringException("Test case URL is missing for submission: " + submissionId);
+            }
+
+            // [New] 기존 테스트 디렉토리 제거 (구조 조정 후 수행하여 이동된 학생 테스트도 제거)
+            Path existingTestDir = workspaceDir.resolve("src/test");
+            if (Files.exists(existingTestDir)) {
+                log.info("[ScoringService] Removing existing test directory for isolation: {}", existingTestDir);
+                org.springframework.util.FileSystemUtils.deleteRecursively(existingTestDir);
+            }
+
+            log.info("[ScoringService] Fetching test cases from URL: {}", request.getTestCodeUrl());
             fetchTestCasePort.fetch(request.getTestCodeUrl(), workspaceDir);
+            log.info("[ScoringService] Successfully fetched test cases");
             
-            // 4. 채점(도커) 실행
+            // 4. Gradle 빌드 파일 생성 (멀티 템플릿 지원)
+            generateGradleFiles(workspaceDir, request.getProjectType());
+            
+            // [Debug] 워크스페이스 구조 확인 및 권한 설정
+            log.info("[ScoringService] Setting 777 permissions and logging workspace for {}:", submissionId);
+            try (java.util.stream.Stream<Path> paths = Files.walk(workspaceDir)) {
+                paths.forEach(p -> {
+                    try {
+                        p.toFile().setWritable(true, false);
+                        p.toFile().setReadable(true, false);
+                        p.toFile().setExecutable(true, false);
+                        log.info("  - {} (Perms set)", workspaceDir.relativize(p));
+                    } catch (Exception e) {
+                        log.warn("Failed to set permissions for: {}", p);
+                    }
+                });
+            }
+            
+            // 5. 채점(도커) 실행
             ScoringResult result = executeScoringPort.execute(request);
             
-            // 5. 채점 결과 발행
+            // 6. 채점 결과 발행
             publishScoringResultPort.publish(result);
             
         } catch (ScoringException e) {
+
             log.error("Scoring process failed for submission: {}", submissionId, e);
             ScoringResult errorResult = ScoringResult.builder()
                 .submissionId(submissionId)
@@ -79,4 +116,83 @@ public class ScoringService implements ScoreSubmissionUseCase {
         }
     }
 
+    private void generateGradleFiles(Path workspaceDir, String projectType) throws Exception {
+        Path buildGradlePath = workspaceDir.resolve("build.gradle");
+        Path settingsGradlePath = workspaceDir.resolve("settings.gradle");
+
+        // 1. settings.gradle 생성 (Gradle 8.7+ 필수)
+        if (!Files.exists(settingsGradlePath)) {
+            Files.writeString(settingsGradlePath, "rootProject.name = 'submission'\n");
+            log.info("Generated settings.gradle in workspace.");
+        }
+        
+        // 2. gradle.properties 생성 (네이티브 서비스 비활성화, 메모리 최적화, 오프라인 모드용 캐시 사용)
+        Path gradlePropertiesPath = workspaceDir.resolve("gradle.properties");
+        if (!Files.exists(gradlePropertiesPath)) {
+            String propertiesContent = "org.gradle.native=false\n" +
+                                     "org.gradle.vfs.watch=false\n" +
+                                     "org.gradle.daemon=false\n" +
+                                     "gradle.user.home=/home/gradle/.gradle\n" +
+                                     "org.gradle.jvmargs=-Xmx256m -XX:MaxMetaspaceSize=128m\n" +
+                                     "org.gradle.welcome=never\n";
+            Files.writeString(gradlePropertiesPath, propertiesContent);
+            log.info("Generated gradle.properties in workspace.");
+        }
+
+        // 3. build.gradle 생성
+        if (Files.exists(buildGradlePath)) {
+            log.info("build.gradle already exists in workspace, skipping generation.");
+            return;
+        }
+
+        String templatePath = "SPRING".equalsIgnoreCase(projectType) 
+                ? "templates/spring-build.gradle" 
+                : "templates/java-build.gradle";
+
+        try (var inputStream = new org.springframework.core.io.ClassPathResource(templatePath).getInputStream()) {
+            String template = org.springframework.util.StreamUtils.copyToString(inputStream, java.nio.charset.StandardCharsets.UTF_8);
+            Files.writeString(buildGradlePath, template);
+            log.info("Generated build.gradle for project type: {} using template: {}", projectType, templatePath);
+        } catch (Exception e) {
+            log.error("Failed to read build.gradle template: {}", templatePath, e);
+            throw new ScoringException("Failed to generate build.gradle from template: " + templatePath, e);
+        }
+    }
+
+    private void adjustProjectStructure(Path workspaceDir) {
+        try {
+            Path srcDir = findSrcDirectory(workspaceDir);
+            if (srcDir != null && !srcDir.getParent().equals(workspaceDir)) {
+                log.info("[ScoringService] Found src directory at non-root location: {}. Moving to root.", workspaceDir.relativize(srcDir));
+                Path sourceRoot = srcDir.getParent();
+                // Move all files from sourceRoot to workspaceDir
+                try (java.util.stream.Stream<Path> stream = Files.list(sourceRoot)) {
+                    stream.forEach(p -> {
+                        try {
+                            Path target = workspaceDir.resolve(sourceRoot.relativize(p));
+                            if (!Files.exists(target)) {
+                                Files.move(p, target);
+                            }
+                        } catch (IOException e) {
+                            log.warn("Failed to move {} to root: {}", p, e.getMessage());
+                        }
+                    });
+                }
+            }
+        } catch (Exception e) {
+            log.error("[ScoringService] Error adjusting project structure", e);
+        }
+    }
+
+    private Path findSrcDirectory(Path startDir) throws IOException {
+        try (java.util.stream.Stream<Path> stream = Files.walk(startDir, 5)) {
+            return stream
+                    .filter(Files::isDirectory)
+                    .filter(p -> p.getFileName().toString().equals("src"))
+                    .findFirst()
+                    .orElse(null);
+        }
+    }
+
 }
+

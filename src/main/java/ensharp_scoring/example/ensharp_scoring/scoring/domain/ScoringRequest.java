@@ -13,4 +13,6 @@ public class ScoringRequest {
     private final String testCodeUrl;
     private final long timeLimit;
     private final int memoryLimit;
+    private final String projectType;
 }
+

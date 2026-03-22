@@ -11,7 +11,8 @@ public record ScoringRequestMessage(
         String repoUrl,
         String testCodeUrl,
         Integer timeLimit,
-        Integer memoryLimit
+        Integer memoryLimit,
+        String projectType
 ) {
     public ScoringRequest toDomain() {
         return new ScoringRequest(
@@ -19,7 +20,9 @@ public record ScoringRequestMessage(
                 repoUrl,
                 testCodeUrl,
                 timeLimit != null ? timeLimit.longValue() : 1000L,
-                memoryLimit != null ? memoryLimit : 128
+                memoryLimit != null ? memoryLimit : 128,
+                projectType
         );
     }
+
 }

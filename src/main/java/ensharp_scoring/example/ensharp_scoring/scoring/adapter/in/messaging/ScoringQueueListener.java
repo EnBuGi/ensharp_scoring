@@ -62,17 +62,19 @@ public class ScoringQueueListener {
         
         while (!Thread.currentThread().isInterrupted()) {
             try {
-                // block for up to 60 seconds
-                String payload = stringRedisTemplate.opsForList().leftPop(SUBMISSION_QUEUE, 60, TimeUnit.SECONDS);
+                // block for up to 5 seconds (must be less than redis command timeout)
+                String payload = stringRedisTemplate.opsForList().leftPop(SUBMISSION_QUEUE, 5, TimeUnit.SECONDS);
+
                 if (payload != null) {
                     processMessage(payload, threadName);
                 }
             } catch (Exception e) {
                 log.error("Error in worker {}: polling scoring queue failed", threadName, e);
+                // pause briefly on error to avoid tight loop
                 try {
-                    Thread.sleep(5000); // Wait before retrying
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
+                    Thread.sleep(1000);
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt(); // Restore interrupt status
                 }
             }
         }
