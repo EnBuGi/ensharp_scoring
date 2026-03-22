@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Collections;
+import java.io.IOException;
 
 import ensharp_scoring.example.ensharp_scoring.scoring.application.port.in.ScoreSubmissionUseCase;
 import ensharp_scoring.example.ensharp_scoring.scoring.application.port.out.ExecuteScoringPort;
@@ -41,11 +42,22 @@ public class ScoringService implements ScoreSubmissionUseCase {
             // 2. 깃허브 코드 클론
             fetchSourceCodePort.fetch(request.getRepoUrl(), workspaceDir);
             
+            // [New] 프로젝트 구조 유연화: src 폴더 위치 조정 (테스트 주입 전 수행)
+            adjustProjectStructure(workspaceDir);
+
             // 3. 테스트 케이스 다운로드 및 압축 해제
             if (request.getTestCodeUrl() == null || request.getTestCodeUrl().isBlank()) {
                 log.error("[ScoringService] Test case URL is missing for submission: {}", submissionId);
                 throw new ScoringException("Test case URL is missing for submission: " + submissionId);
             }
+
+            // [New] 기존 테스트 디렉토리 제거 (구조 조정 후 수행하여 이동된 학생 테스트도 제거)
+            Path existingTestDir = workspaceDir.resolve("src/test");
+            if (Files.exists(existingTestDir)) {
+                log.info("[ScoringService] Removing existing test directory for isolation: {}", existingTestDir);
+                org.springframework.util.FileSystemUtils.deleteRecursively(existingTestDir);
+            }
+
             log.info("[ScoringService] Fetching test cases from URL: {}", request.getTestCodeUrl());
             fetchTestCasePort.fetch(request.getTestCodeUrl(), workspaceDir);
             log.info("[ScoringService] Successfully fetched test cases");
@@ -144,6 +156,41 @@ public class ScoringService implements ScoreSubmissionUseCase {
         } catch (Exception e) {
             log.error("Failed to read build.gradle template: {}", templatePath, e);
             throw new ScoringException("Failed to generate build.gradle from template: " + templatePath, e);
+        }
+    }
+
+    private void adjustProjectStructure(Path workspaceDir) {
+        try {
+            Path srcDir = findSrcDirectory(workspaceDir);
+            if (srcDir != null && !srcDir.getParent().equals(workspaceDir)) {
+                log.info("[ScoringService] Found src directory at non-root location: {}. Moving to root.", workspaceDir.relativize(srcDir));
+                Path sourceRoot = srcDir.getParent();
+                // Move all files from sourceRoot to workspaceDir
+                try (java.util.stream.Stream<Path> stream = Files.list(sourceRoot)) {
+                    stream.forEach(p -> {
+                        try {
+                            Path target = workspaceDir.resolve(sourceRoot.relativize(p));
+                            if (!Files.exists(target)) {
+                                Files.move(p, target);
+                            }
+                        } catch (IOException e) {
+                            log.warn("Failed to move {} to root: {}", p, e.getMessage());
+                        }
+                    });
+                }
+            }
+        } catch (Exception e) {
+            log.error("[ScoringService] Error adjusting project structure", e);
+        }
+    }
+
+    private Path findSrcDirectory(Path startDir) throws IOException {
+        try (java.util.stream.Stream<Path> stream = Files.walk(startDir, 5)) {
+            return stream
+                    .filter(Files::isDirectory)
+                    .filter(p -> p.getFileName().toString().equals("src"))
+                    .findFirst()
+                    .orElse(null);
         }
     }
 

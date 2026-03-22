@@ -67,21 +67,21 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
                 return buildFallbackResult(submissionId, ScoringStatus.TIME_LIMIT_EXCEEDED);
             }
 
-            // 5. 결과 파싱
-            File resultXmlFile = new File(resultsDir, "test-results.xml");
-            if (!resultXmlFile.exists()) {
-                File[] xmlFiles = resultsDir.listFiles((dir, name) -> name.endsWith(".xml"));
-                if (xmlFiles != null && xmlFiles.length > 0) {
-                    resultXmlFile = xmlFiles[0];
+            // 5. 결과 파싱 (모든 XML 파일 수집)
+            File[] xmlFiles = resultsDir.listFiles((dir, name) -> name.endsWith(".xml"));
+            List<File> resultXmlFiles = new ArrayList<>();
+            if (xmlFiles != null) {
+                for (File file : xmlFiles) {
+                    resultXmlFiles.add(file);
                 }
             }
 
-            if (!resultXmlFile.exists()) {
+            if (resultXmlFiles.isEmpty()) {
                 log.warn("[DockerScoring] No XML results found for submission: {}", submissionId);
                 return buildFallbackResult(submissionId, runResult.exitCode == 0 ? ScoringStatus.RUNTIME_ERROR : ScoringStatus.COMPILE_ERROR);
             }
 
-            return resultParser.parse(submissionId, resultXmlFile, runResult.exitCode);
+            return resultParser.parse(submissionId, resultXmlFiles, runResult.exitCode);
 
         } catch (Exception e) {
             log.error("[DockerScoring] Critical error for submission: {}", submissionId, e);
