@@ -41,6 +41,10 @@ dependencies {
 
 tasks.named('test') {
     useJUnitPlatform()
+    
+    // Use the memory limit provided by the scoring request
+    maxHeapSize = project.hasProperty('testMaxHeapSize') ? project.testMaxHeapSize : '256m'
+    
     systemProperty 'junit.jupiter.displayname.generator.default', 'org.junit.jupiter.api.DisplayNameGenerator$Standard'
     reports {
         junitXml.required = true
