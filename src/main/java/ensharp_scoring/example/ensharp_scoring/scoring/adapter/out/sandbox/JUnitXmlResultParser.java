@@ -46,9 +46,16 @@ public class JUnitXmlResultParser {
                             
                             // Prioritize 'name' attribute (includes '()' for methods) to match apiServer's refined parsing.
                             // Fallback to 'methodName' or 'classname'.
-                            String actualMethodName = (nameAttr != null && !nameAttr.isEmpty()) 
+                            String rawName = (nameAttr != null && !nameAttr.isEmpty()) 
                                     ? nameAttr 
                                     : (methodNameAttr != null && !methodNameAttr.isEmpty() ? methodNameAttr : className);
+                            
+                            // Match apiServer's behavior: append "()" to method names if not present.
+                            // We assume it's a method if it's not the classname and doesn't have "()".
+                            String actualMethodName = rawName;
+                            if (rawName != null && !rawName.equals(className) && !rawName.contains("(")) {
+                                actualMethodName = rawName + "()";
+                            }
                             
                             boolean isFailure = testCaseElement.getElementsByTagName("failure").getLength() > 0;
                             boolean isError = testCaseElement.getElementsByTagName("error").getLength() > 0;
