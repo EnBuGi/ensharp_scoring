@@ -153,17 +153,6 @@ public class ScoringService implements ScoreSubmissionUseCase {
             Path targetMainJava = workspaceDir.resolve("src/main/java");
             Files.createDirectories(targetMainJava);
 
-            // [Debug] 워크스페이스 전체 파일 리스팅
-            log.info("[ScoringService] Full recursive scan of workspace:");
-            try (Stream<Path> stream = Files.walk(workspaceDir)) {
-                stream.forEach(p -> {
-                    String relative = workspaceDir.relativize(p).toString();
-                    if (!relative.isBlank()) {
-                        log.info("[ScoringService]   - Entry: {} (Directory: {})", relative, Files.isDirectory(p));
-                    }
-                });
-            }
-
             // 1. 모든 .java 파일 찾기 (src/test 내부 파일은 제외)
             List<Path> javaFiles;
             try (Stream<Path> stream = Files.walk(workspaceDir)) {
