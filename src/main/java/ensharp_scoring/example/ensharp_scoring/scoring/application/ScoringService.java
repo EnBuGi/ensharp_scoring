@@ -52,6 +52,10 @@ public class ScoringService implements ScoreSubmissionUseCase {
             // [New] 권한 설정
             setWorkspacePermissions(workspaceDir);
 
+            // [New] 기존 아티팩트 제거 (기존 src/test, build 등 삭제하여 학생 코드와 충돌 방지)
+            log.info("[ScoringService] Cleaning up workspace (src/test, build, bin) before processing student code");
+            clearOldArtifacts(workspaceDir);
+
             // 3. 학생 코드 구조 조정 및 패키지 정규화
             log.info("[ScoringService] Normalizing student source code package to {}", TARGET_PACKAGE);
             adjustProjectStructure(workspaceDir);
@@ -62,10 +66,6 @@ public class ScoringService implements ScoreSubmissionUseCase {
                 throw new ScoringException("Test case URL is missing for submission: " + submissionId);
             }
 
-            log.info("[ScoringService] Cleaning up workspace (src/test, build, bin) before fetching tests");
-            clearOldArtifacts(workspaceDir);
-
-            log.info("[ScoringService] Fetching test cases from URL: {}", request.getTestCodeUrl());
             fetchTestCasePort.fetch(request.getTestCodeUrl(), workspaceDir);
             
             // [New] 테스트 코드 페치 후 권한 재설정
@@ -202,38 +202,47 @@ public class ScoringService implements ScoreSubmissionUseCase {
 
     private void normalizePackage(Path workspaceDir, String baseDirRelPath) {
         try {
+            log.info("[ScoringService] Starting normalization for target path: {}", baseDirRelPath);
+
             // 1. 전체 워크스페이스에서 모든 클래스 이름 수집 (import 제거용)
             java.util.Set<String> projectClassNames;
             try (Stream<Path> stream = Files.walk(workspaceDir)) {
                 projectClassNames = stream
                     .filter(p -> p.toString().endsWith(".java"))
-                    .filter(p -> !p.getFileName().toString().startsWith("._")) // Skip macOS metadata
-                    .filter(p -> !p.toString().contains("__MACOSX")) // Skip macOS metadata folder
+                    .filter(p -> !p.getFileName().toString().startsWith("._"))
+                    .filter(p -> !p.toString().contains("__MACOSX"))
                     .map(p -> p.getFileName().toString().replace(".java", ""))
                     .collect(java.util.stream.Collectors.toSet());
             }
+
+            log.info("[ScoringService] Collected {} class names from workspace for import filtering", projectClassNames.size());
 
             // 2. 현재 대상 디렉토리(baseDirRelPath)에 해당하는 Java 파일 탐색
             List<Path> targetJavaFiles;
             try (Stream<Path> stream = Files.walk(workspaceDir)) {
                 targetJavaFiles = stream
                     .filter(p -> p.toString().endsWith(".java"))
-                    .filter(p -> !p.getFileName().toString().startsWith("._")) // Skip macOS metadata
-                    .filter(p -> !p.toString().contains("__MACOSX")) // Skip macOS metadata folder
+                    .filter(p -> !p.getFileName().toString().startsWith("._"))
+                    .filter(p -> !p.toString().contains("__MACOSX"))
                     .filter(p -> {
                         String path = p.toString();
-                        // baseDirRelPath가 포함되어 있거나, src 하위가 아닌 루트에 있는 파일들 포함
-                        return path.contains(baseDirRelPath) || (!path.contains("src/main") && !path.contains("src/test"));
+                        // baseDirRelPath가 src/test/java이면 src/test 포함된 파일만 대상으로 함
+                        if (baseDirRelPath.contains("test")) {
+                            return path.contains("src/test");
+                        } else {
+                            // 학생 코드는 src/test가 없는 모든 자바 파일
+                            return !path.contains("src/test");
+                        }
                     })
                     .collect(Collectors.toList());
             }
 
             if (targetJavaFiles.isEmpty()) {
-                log.info("[ScoringService] No Java files found to normalize in {}", baseDirRelPath);
+                log.info("[ScoringService] No Java files found to normalize for path: {}", baseDirRelPath);
                 return;
             }
 
-            log.info("[ScoringService] Normalizing {} Java files in {} to package {}", targetJavaFiles.size(), baseDirRelPath, TARGET_PACKAGE);
+            log.info("[ScoringService] Normalizing {} Java files to package {} in {}", targetJavaFiles.size(), TARGET_PACKAGE, baseDirRelPath);
 
             Path targetDir = workspaceDir.resolve(baseDirRelPath).resolve(TARGET_PACKAGE.replace(".", "/"));
             Files.createDirectories(targetDir);
@@ -241,16 +250,16 @@ public class ScoringService implements ScoreSubmissionUseCase {
             for (Path sourceFile : targetJavaFiles) {
                 try {
                     String originalContent = Files.readString(sourceFile);
-                    String processedContent = processJavaFileContent(originalContent, projectClassNames);
+                    String processedContent = processJavaFileContent(originalContent, projectClassNames, sourceFile.getFileName().toString());
 
                     Path targetFile = targetDir.resolve(sourceFile.getFileName().toString());
                     if (!sourceFile.toAbsolutePath().equals(targetFile.toAbsolutePath())) {
                         Files.writeString(targetFile, processedContent);
                         Files.delete(sourceFile);
-                        log.info("[ScoringService] Moved and normalized: {} -> {}", sourceFile, targetFile);
+                        log.info("[ScoringService] [MOV] {} -> {}", sourceFile.getFileName(), targetFile.toAbsolutePath());
                     } else {
                         Files.writeString(sourceFile, processedContent);
-                        log.info("[ScoringService] Normalized in-place: {}", sourceFile);
+                        log.info("[ScoringService] [FIX] Normalized in-place: {}", sourceFile.getFileName());
                     }
                 } catch (Exception e) {
                     log.error("[ScoringService] Failed to process file: {}", sourceFile, e);
@@ -261,8 +270,8 @@ public class ScoringService implements ScoreSubmissionUseCase {
         }
     }
 
-    private String processJavaFileContent(String originalContent, java.util.Set<String> projectClassNames) {
-        // 1. 패키지 선언 치환
+    private String processJavaFileContent(String originalContent, java.util.Set<String> projectClassNames, String fileName) {
+        // 1. 패키지 선언 치환 (멀티라인 및 코멘트 대응 강화)
         String normalizedContent = originalContent.replaceAll("(?m)^\\s*package\\s+[^;]+;", "package " + TARGET_PACKAGE + ";");
         if (!normalizedContent.contains("package " + TARGET_PACKAGE + ";")) {
             normalizedContent = "package " + TARGET_PACKAGE + ";\n" + normalizedContent;
@@ -271,6 +280,8 @@ public class ScoringService implements ScoreSubmissionUseCase {
         // 2. 내부 클래스 import 문 주석 처리
         StringBuilder finalContent = new StringBuilder();
         String[] lines = normalizedContent.split("\n");
+        int commentedCount = 0;
+        
         for (String line : lines) {
             String trimmed = line.trim();
             if (trimmed.startsWith("import ") && trimmed.endsWith(";")) {
@@ -280,12 +291,18 @@ public class ScoringService implements ScoreSubmissionUseCase {
                     String className = imp.substring(lastDot + 1);
                     if (projectClassNames.contains(className)) {
                         finalContent.append("// Redundant internal import removed: ").append(line).append("\n");
+                        commentedCount++;
                         continue;
                     }
                 }
             }
             finalContent.append(line).append("\n");
         }
+
+        if (commentedCount > 0) {
+            log.info("[ScoringService] File {}: Commented out {} internal imports", fileName, commentedCount);
+        }
+
         return finalContent.toString();
     }
 
