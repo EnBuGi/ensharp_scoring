@@ -4,6 +4,7 @@ import ensharp_scoring.example.ensharp_scoring.scoring.domain.ScoringResult;
 import ensharp_scoring.example.ensharp_scoring.scoring.domain.ScoringStatus;
 import ensharp_scoring.example.ensharp_scoring.scoring.domain.TestCaseDto;
 import ensharp_scoring.example.ensharp_scoring.scoring.domain.TestDetail;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import javax.xml.parsers.DocumentBuilder;
@@ -18,16 +19,21 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+@Slf4j
 @Component
 public class JUnitXmlResultParser {
 
     public ScoringResult parse(String submissionId, List<File> xmlFiles, int exitCode, List<TestCaseDto> allowedTestCases) {
+        log.info("[JUnitXmlResultParser] Starting parse: submissionId={}, exitCode={}, xmlFilesCount={}", 
+                submissionId, exitCode, xmlFiles.size());
+        
         // 1. Parse all XML results into a map for easy lookup
         Map<String, TestDetail> allResultsMap = new HashMap<>();
 
         for (File xmlFile : xmlFiles) {
             try {
                 if (xmlFile != null && xmlFile.exists()) {
+                    log.debug("[JUnitXmlResultParser] Parsing file: {}", xmlFile.getName());
                     DocumentBuilderFactory dbFactory = DocumentBuilderFactory.newInstance();
                     DocumentBuilder dBuilder = dbFactory.newDocumentBuilder();
                     Document doc = dBuilder.parse(xmlFile);
@@ -57,6 +63,9 @@ public class JUnitXmlResultParser {
                                 actualMethodName = rawName + "()";
                             }
                             
+                            log.info("[JUnitXmlResultParser] Parsed test case: rawName='{}', actualMethodName='{}', className='{}'", 
+                                    rawName, actualMethodName, className);
+                            
                             boolean isFailure = testCaseElement.getElementsByTagName("failure").getLength() > 0;
                             boolean isError = testCaseElement.getElementsByTagName("error").getLength() > 0;
                             boolean isSkipped = testCaseElement.getElementsByTagName("skipped").getLength() > 0;
@@ -81,7 +90,7 @@ public class JUnitXmlResultParser {
                     }
                 }
             } catch (Exception e) {
-                // Ignore parsing issues for individual files
+                log.error("[JUnitXmlResultParser] Error parsing XML file {}: {}", xmlFile != null ? xmlFile.getName() : "null", e.getMessage());
             }
         }
 
@@ -89,8 +98,10 @@ public class JUnitXmlResultParser {
         List<TestDetail> filteredDetails = new ArrayList<>();
         int passedCount = 0;
 
+        log.info("[JUnitXmlResultParser] All identified results in XML: {}", allResultsMap.keySet());
+
         if (allowedTestCases == null || allowedTestCases.isEmpty()) {
-            // Fallback for empty allowed list: include all results (might happen if old request)
+            log.info("[JUnitXmlResultParser] allowedTestCases is empty, returning all found results");
             for (TestDetail detail : allResultsMap.values()) {
                 filteredDetails.add(detail);
                 if ("PASSED".equals(detail.getStatus())) {
@@ -98,17 +109,21 @@ public class JUnitXmlResultParser {
                 }
             }
         } else {
+            log.info("[JUnitXmlResultParser] Filtering results based on {} allowed test cases", allowedTestCases.size());
             for (TestCaseDto allowed : allowedTestCases) {
-                TestDetail result = allResultsMap.get(allowed.getName());
+                String targetName = allowed.getName();
+                TestDetail result = allResultsMap.get(targetName);
                 if (result != null) {
+                    log.info("[JUnitXmlResultParser] Match found: targetName='{}', status='{}'", targetName, result.getStatus());
                     filteredDetails.add(result);
                     if ("PASSED".equals(result.getStatus())) {
                         passedCount++;
                     }
                 } else {
+                    log.warn("[JUnitXmlResultParser] Match NOT found: targetName='{}'", targetName);
                     // Test case allowed by mentor but not found in execution (zip doesn't have it)
                     filteredDetails.add(TestDetail.builder()
-                            .methodName(allowed.getName())
+                            .methodName(targetName)
                             .status("FAILED")
                             .message("Test case not found in execution results.")
                             .build());
@@ -123,6 +138,9 @@ public class JUnitXmlResultParser {
         if (exitCode != 0 && passedCount == filteredDetails.size()) {
             overallStatus = ScoringStatus.RUNTIME_ERROR;
         }
+
+        log.info("[JUnitXmlResultParser] Final result: passedCount={}, total={}, status={}", 
+                passedCount, filteredDetails.size(), overallStatus);
 
         return ScoringResult.builder()
                 .submissionId(submissionId)
