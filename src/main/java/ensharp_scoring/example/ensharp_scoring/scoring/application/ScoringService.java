@@ -59,12 +59,9 @@ public class ScoringService implements ScoreSubmissionUseCase {
                 throw new ScoringException("Test case URL is missing for submission: " + submissionId);
             }
 
-            // [New] 기존 테스트 디렉토리 제거 (구조 조정 후 수행하여 이동된 학생 테스트도 제거)
-            Path existingTestDir = workspaceDir.resolve("src/test");
-            if (Files.exists(existingTestDir)) {
-                log.info("[ScoringService] Removing existing test directory for isolation: {}", existingTestDir);
-                org.springframework.util.FileSystemUtils.deleteRecursively(existingTestDir);
-            }
+            // [New] 기존 테스트 및 빌드 결과물 제거 (격리 강화)
+            log.info("[ScoringService] Cleaning up workspace (src/test, build, bin) before fetching tests");
+            clearOldArtifacts(workspaceDir);
 
             log.info("[ScoringService] Fetching test cases from URL: {}", request.getTestCodeUrl());
             fetchTestCasePort.fetch(request.getTestCodeUrl(), workspaceDir);
@@ -151,43 +148,57 @@ public class ScoringService implements ScoreSubmissionUseCase {
         try {
             log.info("[ScoringService] Starting robust project structure adjustment for workspace: {}", workspaceDir);
             Path targetMainJava = workspaceDir.resolve("src/main/java");
+            Path targetMainResources = workspaceDir.resolve("src/main/resources");
             Files.createDirectories(targetMainJava);
+            Files.createDirectories(targetMainResources);
 
-            // 1. 모든 .java 파일 찾기 (src/test 내부 파일은 제외)
-            List<Path> javaFiles;
+            // 1. 모든 .java 및 리소스 파일 찾기 (src/test 내부 파일은 제외)
+            List<Path> sourceFiles;
             try (Stream<Path> stream = Files.walk(workspaceDir)) {
-                javaFiles = stream
+                sourceFiles = stream
                     .filter(p -> Files.isRegularFile(p))
-                    .filter(p -> p.getFileName().toString().toLowerCase().endsWith(".java"))
-                    .filter(p -> !p.toString().contains("src/test"))
+                    .filter(p -> {
+                        String name = p.getFileName().toString().toLowerCase();
+                        String path = p.toString();
+                        // src/test 내부는 제외 (나중에 삭제 및 공식 테스트 주입)
+                        if (path.contains("src/test")) return false;
+                        // .java 또는 리소스 파일들만 구조 조정 대상
+                        return name.endsWith(".java") || name.endsWith(".xml") || name.endsWith(".properties") || name.endsWith(".yml") || name.endsWith(".yaml");
+                    })
                     .collect(Collectors.toList());
             }
 
-            log.info("[ScoringService] Found {} .java files for structure adjustment", javaFiles.size());
-            for (Path f : javaFiles) {
+            log.info("[ScoringService] Found {} source/resource files for structure adjustment", sourceFiles.size());
+            for (Path f : sourceFiles) {
                 log.info("[ScoringService]   - Discovered: {}", workspaceDir.relativize(f));
             }
 
-            if (javaFiles.isEmpty()) {
+            if (sourceFiles.isEmpty()) {
                 log.info("[ScoringService] No .java files found in workspace.");
                 return;
             }
 
-            // 2. 각 파일의 패키지 분석 후 이동
-            for (Path sourceFile : javaFiles) {
-                String packageName = parsePackageName(sourceFile);
-                Path packagePath = packageName.isEmpty() ? Paths.get("") : Paths.get(packageName.replace(".", "/"));
-                Path targetPath = targetMainJava.resolve(packagePath).resolve(sourceFile.getFileName());
+            // 2. 각 파일의 종류에 따른 이동
+            for (Path sourceFile : sourceFiles) {
+                String fileName = sourceFile.getFileName().toString();
+                Path targetPath;
 
-                // 이미 올바른 위치에 있는 경우 건너뜀
+                if (fileName.toLowerCase().endsWith(".java")) {
+                    String packageName = parsePackageName(sourceFile);
+                    Path packagePath = packageName.isEmpty() ? Paths.get("") : Paths.get(packageName.replace(".", "/"));
+                    targetPath = targetMainJava.resolve(packagePath).resolve(fileName);
+                } else {
+                    // 리소스 파일은 원래의 상대 경로를 최대한 유지하거나 src/main/resources 로 이동
+                    // 여기서는 간단히 src/main/resources 바로 아래로 이동 (추후 구조 유지 필요시 수정)
+                    targetPath = targetMainResources.resolve(fileName);
+                }
+
                 if (sourceFile.toAbsolutePath().equals(targetPath.toAbsolutePath())) {
                     continue;
                 }
 
                 Files.createDirectories(targetPath.getParent());
-                log.info("[ScoringService] Moving student code: {} -> {}", workspaceDir.relativize(sourceFile), workspaceDir.relativize(targetPath));
-                
-                // 이동 시 기존 파일이 있으면 덮어씀 (Standard 구조로 정규화)
+                log.info("[ScoringService] Moving student file: {} -> {}", workspaceDir.relativize(sourceFile), workspaceDir.relativize(targetPath));
                 Files.move(sourceFile, targetPath, StandardCopyOption.REPLACE_EXISTING);
             }
             
@@ -197,6 +208,23 @@ public class ScoringService implements ScoreSubmissionUseCase {
             log.info("[ScoringService] Completed robust project structure adjustment.");
         } catch (Exception e) {
             log.error("[ScoringService] Error during robust project structure adjustment", e);
+        }
+    }
+
+    /**
+     * src/test, build, bin 폴더를 삭제하여 이전 빌드나 학생 테스트의 간섭을 방지합니다.
+     */
+    private void clearOldArtifacts(Path workspaceDir) {
+        String[] targets = {"src/test", "build", "bin", "out", "__MACOSX"};
+        for (String target : targets) {
+            Path targetPath = workspaceDir.resolve(target);
+            if (Files.exists(targetPath)) {
+                try {
+                    org.springframework.util.FileSystemUtils.deleteRecursively(targetPath);
+                } catch (IOException e) {
+                    log.warn("Failed to delete old artifact: {}", targetPath);
+                }
+            }
         }
     }
 
