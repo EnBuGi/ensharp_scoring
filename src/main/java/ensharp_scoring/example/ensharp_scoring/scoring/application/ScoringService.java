@@ -132,12 +132,7 @@ public class ScoringService implements ScoreSubmissionUseCase {
             log.info("Generated gradle.properties in workspace.");
         }
 
-        // 3. build.gradle 생성
-        if (Files.exists(buildGradlePath)) {
-            log.info("build.gradle already exists in workspace, skipping generation.");
-            return;
-        }
-
+        // 3. build.gradle 생성 (항상 덮어쓰기 하여 시스템 템플릿 강제 적용)
         String templatePath = "SPRING".equalsIgnoreCase(projectType) 
                 ? "templates/spring-build.gradle" 
                 : "templates/java-build.gradle";
@@ -145,7 +140,7 @@ public class ScoringService implements ScoreSubmissionUseCase {
         try (var inputStream = new org.springframework.core.io.ClassPathResource(templatePath).getInputStream()) {
             String template = org.springframework.util.StreamUtils.copyToString(inputStream, java.nio.charset.StandardCharsets.UTF_8);
             Files.writeString(buildGradlePath, template);
-            log.info("Generated build.gradle for project type: {} using template: {}", projectType, templatePath);
+            log.info("[ScoringService] Forcefully generated build.gradle for project type: {} using template: {}", projectType, templatePath);
         } catch (Exception e) {
             log.error("Failed to read build.gradle template: {}", templatePath, e);
             throw new ScoringException("Failed to generate build.gradle from template: " + templatePath, e);
@@ -162,9 +157,15 @@ public class ScoringService implements ScoreSubmissionUseCase {
             List<Path> javaFiles;
             try (Stream<Path> stream = Files.walk(workspaceDir)) {
                 javaFiles = stream
+                    .filter(p -> Files.isRegularFile(p))
                     .filter(p -> p.toString().endsWith(".java"))
                     .filter(p -> !p.toString().contains("src/test"))
                     .collect(Collectors.toList());
+            }
+
+            log.info("[ScoringService] Found {} .java files for structure adjustment", javaFiles.size());
+            for (Path f : javaFiles) {
+                log.info("[ScoringService]   - Discovered: {}", workspaceDir.relativize(f));
             }
 
             if (javaFiles.isEmpty()) {
