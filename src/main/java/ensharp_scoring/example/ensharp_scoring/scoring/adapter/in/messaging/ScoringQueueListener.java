@@ -82,11 +82,11 @@ public class ScoringQueueListener {
 
     private void processMessage(String payload, String workerName) {
         try {
-            log.info("Worker {} received scoring request: {}", workerName, payload);
             ScoringRequestMessage requestMessage = objectMapper.readValue(payload, ScoringRequestMessage.class);
+            log.info("Worker {} received scoring request: submissionId={}", workerName, requestMessage.submissionId());
             scoreSubmissionUseCase.score(requestMessage.toDomain());
         } catch (Exception e) {
-            log.error("Worker {} failed to process scoring request: {}", workerName, payload, e);
+            log.error("Worker {} failed to process scoring request", workerName, e);
         }
     }
 }

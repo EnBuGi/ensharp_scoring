@@ -81,7 +81,7 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
                 return buildFallbackResult(submissionId, runResult.exitCode == 0 ? ScoringStatus.RUNTIME_ERROR : ScoringStatus.COMPILE_ERROR);
             }
 
-            return resultParser.parse(submissionId, resultXmlFiles, runResult.exitCode);
+            return resultParser.parse(submissionId, resultXmlFiles, runResult.exitCode, request.getTestCases());
 
         } catch (Exception e) {
             log.error("[DockerScoring] Critical error for submission: {}", submissionId, e);
@@ -102,7 +102,7 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         command.add("create");
         command.add("--name");
         command.add(containerName);
-        command.add("--memory=" + request.getMemoryLimit() + "m");
+        command.add("--memory=" + (request.getMemoryLimit() + 256) + "m");
         command.add("--network=none");
         command.add("--pids-limit=1024");
         command.add("-w");
@@ -121,16 +121,21 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         // ls -la 로 파일 존재 여부 확인
         // chmod -R 777로 캐시 디렉토리 권한 부여 (root가 lock 파일을 생성할 수 있게 함)
         // --offline 플래그로 네트워크 없이 캐시 사용 강제
+        // -Dorg.gradle.jvmargs="-Xmx128m" 로 데몬 프로세스 힙 제한 강제 (GRADLE_OPTS보다 우선순위 높음)
         command.add("sh");
         command.add("-c");
         command.add("echo '--- Runtime Environment ---' && " +
                    "id && echo \"GRADLE_USER_HOME: /gradle-user-home-cache\" && " +
+                   "echo '--- Workspace Structure ---' && " +
+                   "find . -maxdepth 5 -not -path '*/.*' && " +
                    "echo '--- Cache Size (/gradle-user-home-cache) ---' && " +
                    "du -sh /gradle-user-home-cache || true && " +
                    "chmod -R 777 /gradle-user-home-cache || true && " +
                    "export GRADLE_USER_HOME=/gradle-user-home-cache && " +
-                   "export GRADLE_OPTS='-Xmx64m -Dorg.gradle.native=false -Dorg.gradle.vfs.watch=false -Dorg.gradle.daemon=false -Dorg.gradle.welcome=never' && " +
-                   "gradle test --no-daemon --offline -Dorg.gradle.native=false -Dorg.gradle.vfs.watch=false -Dorg.gradle.daemon=false -Dorg.gradle.welcome=never");
+                   "gradle test --no-daemon --offline " +
+                   "-PtestMaxHeapSize=" + request.getMemoryLimit() + "m " +
+                   "-Dorg.gradle.jvmargs=\"-Xmx128m\" " +
+                   "-Dorg.gradle.native=false -Dorg.gradle.vfs.watch=false -Dorg.gradle.daemon=false -Dorg.gradle.welcome=never");
         
         return command;
     }

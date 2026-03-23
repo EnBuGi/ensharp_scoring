@@ -2,6 +2,7 @@ package ensharp_scoring.example.ensharp_scoring.scoring.adapter.out.sandbox;
 
 import ensharp_scoring.example.ensharp_scoring.scoring.domain.ScoringResult;
 import ensharp_scoring.example.ensharp_scoring.scoring.domain.ScoringStatus;
+import ensharp_scoring.example.ensharp_scoring.scoring.domain.TestCaseDto;
 import ensharp_scoring.example.ensharp_scoring.scoring.domain.TestDetail;
 import org.springframework.stereotype.Component;
 
@@ -13,16 +14,16 @@ import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 import java.io.File;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Component
 public class JUnitXmlResultParser {
 
-    public ScoringResult parse(String submissionId, List<File> xmlFiles, int exitCode) {
-        List<TestDetail> details = new ArrayList<>();
-        int totalTestsCount = 0;
-        int failedTestsCount = 0;
-        int errorTestsCount = 0;
+    public ScoringResult parse(String submissionId, List<File> xmlFiles, int exitCode, List<TestCaseDto> allowedTestCases) {
+        // 1. Parse all XML results into a map for easy lookup
+        Map<String, TestDetail> allResultsMap = new HashMap<>();
 
         for (File xmlFile : xmlFiles) {
             try {
@@ -32,23 +33,6 @@ public class JUnitXmlResultParser {
                     Document doc = dBuilder.parse(xmlFile);
                     doc.getDocumentElement().normalize();
 
-                    NodeList testSuiteList = doc.getElementsByTagName("testsuite");
-                    
-                    for (int i = 0; i < testSuiteList.getLength(); i++) {
-                        Node testSuiteNode = testSuiteList.item(i);
-                        if (testSuiteNode.getNodeType() == Node.ELEMENT_NODE) {
-                            Element testSuiteElement = (Element) testSuiteNode;
-                            
-                            try {
-                                totalTestsCount += Integer.parseInt(testSuiteElement.getAttribute("tests"));
-                                failedTestsCount += Integer.parseInt(testSuiteElement.getAttribute("failures"));
-                                errorTestsCount += Integer.parseInt(testSuiteElement.getAttribute("errors"));
-                            } catch (NumberFormatException e) {
-                                // Ignore parsing issues for attributes and continue with elements
-                            }
-                        }
-                    }
-                    
                     NodeList testCaseList = doc.getElementsByTagName("testcase");
                     
                     for (int i = 0; i < testCaseList.getLength(); i++) {
@@ -56,7 +40,6 @@ public class JUnitXmlResultParser {
                         if (testCaseNode.getNodeType() == Node.ELEMENT_NODE) {
                             Element testCaseElement = (Element) testCaseNode;
                             
-                            // methodName 속성이 있으면 그것을 우선 사용 (JUnit 5 + Gradle 조합에서 displayName 대신 메서드명을 얻기 위함)
                             String methodNameAttr = testCaseElement.getAttribute("methodName");
                             String nameAttr = testCaseElement.getAttribute("name");
                             String className = testCaseElement.getAttribute("classname");
@@ -77,10 +60,11 @@ public class JUnitXmlResultParser {
                             }
                             
                             boolean passed = !isFailure && !isError && !isSkipped;
-                            
-                            details.add(TestDetail.builder()
+                            String status = passed ? "PASSED" : (isFailure ? "FAILED" : (isError ? "ERROR" : "SKIPPED"));
+
+                            allResultsMap.put(finalMethodName, TestDetail.builder()
                                     .methodName(finalMethodName)
-                                    .status(passed ? "PASSED" : (isFailure ? "FAILED" : (isError ? "ERROR" : "SKIPPED")))
+                                    .status(status)
                                     .durationMs(0L)
                                     .message(message)
                                     .build());
@@ -88,28 +72,58 @@ public class JUnitXmlResultParser {
                     }
                 }
             } catch (Exception e) {
-                // Log parsing error for this specific file, but continue with others
-                failedTestsCount++; 
+                // Ignore parsing issues for individual files
             }
         }
 
-        boolean hasFailures = failedTestsCount > 0 || errorTestsCount > 0;
-        ScoringStatus status;
-        
-        if (hasFailures) {
-            status = ScoringStatus.WRONG_ANSWER;
-        } else if (exitCode != 0) {
-            status = ScoringStatus.RUNTIME_ERROR;
+        // 2. Filter and Score based on allowedTestCases
+        List<TestDetail> filteredDetails = new ArrayList<>();
+        int passedCount = 0;
+        int totalScore = 0;
+
+        if (allowedTestCases == null || allowedTestCases.isEmpty()) {
+            // Fallback for empty allowed list: include all results (might happen if old request)
+            for (TestDetail detail : allResultsMap.values()) {
+                filteredDetails.add(detail);
+                if ("PASSED".equals(detail.getStatus())) {
+                    passedCount++;
+                }
+            }
         } else {
-            status = ScoringStatus.ACCEPTED;
+            for (TestCaseDto allowed : allowedTestCases) {
+                TestDetail result = allResultsMap.get(allowed.getName());
+                if (result != null) {
+                    filteredDetails.add(result);
+                    if ("PASSED".equals(result.getStatus())) {
+                        passedCount++;
+                        totalScore += allowed.getScore();
+                    }
+                } else {
+                    // Test case allowed by mentor but not found in execution (zip doesn't have it)
+                    filteredDetails.add(TestDetail.builder()
+                            .methodName(allowed.getName())
+                            .status("FAILED")
+                            .message("Test case not found in execution results.")
+                            .build());
+                }
+            }
+        }
+
+        ScoringStatus overallStatus = (filteredDetails.isEmpty() || passedCount < filteredDetails.size()) 
+                ? ScoringStatus.WRONG_ANSWER 
+                : ScoringStatus.ACCEPTED;
+        
+        if (exitCode != 0 && passedCount == filteredDetails.size()) {
+            overallStatus = ScoringStatus.RUNTIME_ERROR;
         }
 
         return ScoringResult.builder()
                 .submissionId(submissionId)
-                .overallStatus(status)
-                .totalTests(totalTestsCount > 0 ? totalTestsCount : details.size())
-                .passedTests(totalTestsCount > 0 ? (totalTestsCount - failedTestsCount - errorTestsCount) : (int) details.stream().filter(d -> "PASSED".equals(d.getStatus())).count())
-                .details(details)
+                .overallStatus(overallStatus)
+                .totalTests(filteredDetails.size())
+                .passedTests(passedCount)
+                .totalScore(totalScore)
+                .details(filteredDetails)
                 .build();
     }
 }
