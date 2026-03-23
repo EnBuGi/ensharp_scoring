@@ -11,6 +11,5 @@ public class ScoringResult {
     private final ScoringStatus overallStatus;
     private final int totalTests;
     private final int passedTests;
-    private final int totalScore;
     private final List<TestDetail> details;
 }

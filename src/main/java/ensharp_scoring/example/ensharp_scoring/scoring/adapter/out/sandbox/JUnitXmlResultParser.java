@@ -44,7 +44,9 @@ public class JUnitXmlResultParser {
                             String nameAttr = testCaseElement.getAttribute("name");
                             String className = testCaseElement.getAttribute("classname");
                             
-                            String finalMethodName = (methodNameAttr != null && !methodNameAttr.isEmpty()) 
+                            // Prioritize 'methodName' attribute if present (guaranteed method name).
+                            // Fallback to 'name' attribute (standard JUnit method identifier).
+                            String actualMethodName = (methodNameAttr != null && !methodNameAttr.isEmpty()) 
                                     ? methodNameAttr 
                                     : (nameAttr != null && !nameAttr.isEmpty() ? nameAttr : className);
                             
@@ -62,8 +64,8 @@ public class JUnitXmlResultParser {
                             boolean passed = !isFailure && !isError && !isSkipped;
                             String status = passed ? "PASSED" : (isFailure ? "FAILED" : (isError ? "ERROR" : "SKIPPED"));
 
-                            allResultsMap.put(finalMethodName, TestDetail.builder()
-                                    .methodName(finalMethodName)
+                            allResultsMap.put(actualMethodName, TestDetail.builder()
+                                    .methodName(actualMethodName)
                                     .status(status)
                                     .durationMs(0L)
                                     .message(message)
@@ -76,10 +78,9 @@ public class JUnitXmlResultParser {
             }
         }
 
-        // 2. Filter and Score based on allowedTestCases
+        // 2. Filter based on allowedTestCases
         List<TestDetail> filteredDetails = new ArrayList<>();
         int passedCount = 0;
-        int totalScore = 0;
 
         if (allowedTestCases == null || allowedTestCases.isEmpty()) {
             // Fallback for empty allowed list: include all results (might happen if old request)
@@ -96,7 +97,6 @@ public class JUnitXmlResultParser {
                     filteredDetails.add(result);
                     if ("PASSED".equals(result.getStatus())) {
                         passedCount++;
-                        totalScore += allowed.getScore();
                     }
                 } else {
                     // Test case allowed by mentor but not found in execution (zip doesn't have it)
@@ -122,7 +122,6 @@ public class JUnitXmlResultParser {
                 .overallStatus(overallStatus)
                 .totalTests(filteredDetails.size())
                 .passedTests(passedCount)
-                .totalScore(totalScore)
                 .details(filteredDetails)
                 .build();
     }
