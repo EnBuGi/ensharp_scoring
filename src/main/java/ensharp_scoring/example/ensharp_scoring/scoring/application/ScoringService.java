@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.io.IOException;
+import java.io.File;
 
 import ensharp_scoring.example.ensharp_scoring.scoring.application.port.in.ScoreSubmissionUseCase;
 import ensharp_scoring.example.ensharp_scoring.scoring.application.port.out.ExecuteScoringPort;
@@ -46,7 +47,10 @@ public class ScoringService implements ScoreSubmissionUseCase {
             // 2. 깃허브 코드 클론
             fetchSourceCodePort.fetch(request.getRepoUrl(), workspaceDir, request.getGithubAccessToken());
             
-            // [New] 프로젝트 구조 유연화: src 폴더 위치 조정 (테스트 주입 전 수행)
+            // [New] 권한 설정: 구조 조정 및 테스트 주입 전 모든 파일에 대해 권한 확보
+            setWorkspacePermissions(workspaceDir);
+
+            // [New] 프로젝트 구조 유연화: src 폴더 위치 조정
             adjustProjectStructure(workspaceDir);
 
             // 3. 테스트 케이스 다운로드 및 압축 해제
@@ -68,21 +72,6 @@ public class ScoringService implements ScoreSubmissionUseCase {
             
             // 4. Gradle 빌드 파일 생성 (멀티 템플릿 지원)
             generateGradleFiles(workspaceDir, request.getProjectType());
-            
-            // [Debug] 워크스페이스 구조 확인 및 권한 설정
-            log.info("[ScoringService] Setting 777 permissions and logging workspace for {}:", submissionId);
-            try (java.util.stream.Stream<Path> paths = Files.walk(workspaceDir)) {
-                paths.forEach(p -> {
-                    try {
-                        p.toFile().setWritable(true, false);
-                        p.toFile().setReadable(true, false);
-                        p.toFile().setExecutable(true, false);
-                        log.info("  - {} (Perms set)", workspaceDir.relativize(p));
-                    } catch (Exception e) {
-                        log.warn("Failed to set permissions for: {}", p);
-                    }
-                });
-            }
             
             // 5. 채점(도커) 실행
             ScoringResult result = executeScoringPort.execute(request);
@@ -234,6 +223,24 @@ public class ScoringService implements ScoreSubmissionUseCase {
             }
         } catch (IOException e) {
             log.warn("Error during cleanup of empty directories", e);
+        }
+    }
+
+    private void setWorkspacePermissions(Path workspaceDir) {
+        log.info("[ScoringService] Setting 777 permissions for workspace: {}", workspaceDir);
+        try (Stream<Path> stream = Files.walk(workspaceDir)) {
+            stream.forEach(p -> {
+                try {
+                    File file = p.toFile();
+                    file.setWritable(true, false);
+                    file.setReadable(true, false);
+                    file.setExecutable(true, false);
+                } catch (Exception e) {
+                    log.warn("[ScoringService] Failed to set permissions for: {}", p);
+                }
+            });
+        } catch (IOException e) {
+            log.error("[ScoringService] Error while setting workspace permissions", e);
         }
     }
 
