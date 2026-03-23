@@ -202,6 +202,8 @@ public class ScoringService implements ScoreSubmissionUseCase {
             try (Stream<Path> stream = Files.walk(workspaceDir)) {
                 projectClassNames = stream
                     .filter(p -> p.toString().endsWith(".java"))
+                    .filter(p -> !p.getFileName().toString().startsWith("._")) // Skip macOS metadata
+                    .filter(p -> !p.toString().contains("__MACOSX")) // Skip macOS metadata folder
                     .map(p -> p.getFileName().toString().replace(".java", ""))
                     .collect(java.util.stream.Collectors.toSet());
             }
@@ -211,6 +213,8 @@ public class ScoringService implements ScoreSubmissionUseCase {
             try (Stream<Path> stream = Files.walk(workspaceDir)) {
                 targetJavaFiles = stream
                     .filter(p -> p.toString().endsWith(".java"))
+                    .filter(p -> !p.getFileName().toString().startsWith("._")) // Skip macOS metadata
+                    .filter(p -> !p.toString().contains("__MACOSX")) // Skip macOS metadata folder
                     .filter(p -> {
                         String path = p.toString();
                         // baseDirRelPath가 포함되어 있거나, src 하위가 아닌 루트에 있는 파일들 포함
@@ -238,10 +242,10 @@ public class ScoringService implements ScoreSubmissionUseCase {
                     if (!sourceFile.toAbsolutePath().equals(targetFile.toAbsolutePath())) {
                         Files.writeString(targetFile, processedContent);
                         Files.delete(sourceFile);
-                        log.debug("[ScoringService] Moved and normalized: {} -> {}", sourceFile.getFileName(), targetFile);
+                        log.info("[ScoringService] Moved and normalized: {} -> {}", sourceFile, targetFile);
                     } else {
                         Files.writeString(sourceFile, processedContent);
-                        log.debug("[ScoringService] Normalized in-place: {}", sourceFile.getFileName());
+                        log.info("[ScoringService] Normalized in-place: {}", sourceFile);
                     }
                 } catch (Exception e) {
                     log.error("[ScoringService] Failed to process file: {}", sourceFile, e);
