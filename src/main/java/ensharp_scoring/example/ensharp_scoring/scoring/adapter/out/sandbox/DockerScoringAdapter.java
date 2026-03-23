@@ -68,6 +68,7 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
             }
 
             // 5. 결과 파싱 (모든 XML 파일 수집)
+            log.info("[DockerScoring] Step 5: Parsing results from XML");
             File[] xmlFiles = resultsDir.listFiles((dir, name) -> name.endsWith(".xml"));
             List<File> resultXmlFiles = new ArrayList<>();
             if (xmlFiles != null) {
