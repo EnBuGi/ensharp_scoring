@@ -27,18 +27,17 @@ public class JGitAdapter implements FetchSourceCodePort {
 
             if (githubAccessToken != null && !githubAccessToken.isBlank()) {
                 log.info("[JGitAdapter] Using githubAccessToken (length: {})", githubAccessToken.length());
-                // For GitHub HTTPS, the token is technically the password. The username can be anything.
-                // Using the token as username and blank as password is a common practice.
+                // The most standard way for JGit + GitHub PAT/OAuth:
+                // Username: the token, Password: empty string
                 cloneCommand.setCredentialsProvider(new UsernamePasswordCredentialsProvider(githubAccessToken, ""));
-            } else {
-                log.warn("[JGitAdapter] No githubAccessToken provided for repo: {}", repoUrl);
             }
 
             cloneCommand.call().close();
             log.info("[JGitAdapter] Successfully cloned repository: {}", repoUrl);
         } catch (GitAPIException e) {
             log.error("[JGitAdapter] GitAPIException during fetch: {}", e.getMessage());
-            throw new ScoringException("Failed to clone github repository at " + repoUrl, e);
+            // If it still fails, suggest checking token scopes or repo permissions
+            throw new ScoringException("Failed to clone github repository at " + repoUrl + ". Please check if the token has 'repo' scope and the user has access to the repository.", e);
         }
     }
 }
