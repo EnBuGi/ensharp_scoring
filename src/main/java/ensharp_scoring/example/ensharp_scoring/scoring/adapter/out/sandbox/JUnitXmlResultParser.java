@@ -44,11 +44,11 @@ public class JUnitXmlResultParser {
                             String nameAttr = testCaseElement.getAttribute("name");
                             String className = testCaseElement.getAttribute("classname");
                             
-                            // Prioritize 'methodName' attribute if present (guaranteed method name).
-                            // Fallback to 'name' attribute (standard JUnit method identifier).
-                            String actualMethodName = (methodNameAttr != null && !methodNameAttr.isEmpty()) 
-                                    ? methodNameAttr 
-                                    : (nameAttr != null && !nameAttr.isEmpty() ? nameAttr : className);
+                            // Prioritize 'name' attribute (includes '()' for methods) to match apiServer's refined parsing.
+                            // Fallback to 'methodName' or 'classname'.
+                            String actualMethodName = (nameAttr != null && !nameAttr.isEmpty()) 
+                                    ? nameAttr 
+                                    : (methodNameAttr != null && !methodNameAttr.isEmpty() ? methodNameAttr : className);
                             
                             boolean isFailure = testCaseElement.getElementsByTagName("failure").getLength() > 0;
                             boolean isError = testCaseElement.getElementsByTagName("error").getLength() > 0;
