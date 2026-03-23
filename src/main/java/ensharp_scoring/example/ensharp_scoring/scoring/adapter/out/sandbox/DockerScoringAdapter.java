@@ -78,8 +78,11 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
             }
 
             if (resultXmlFiles.isEmpty()) {
-                log.warn("[DockerScoring] No XML results found for submission: {}", submissionId);
-                return buildFallbackResult(submissionId, runResult.exitCode == 0 ? ScoringStatus.RUNTIME_ERROR : ScoringStatus.COMPILE_ERROR);
+                log.warn("[DockerScoring] No XML results found for submission: {}. ExitCode={}, TimedOut={}", 
+                        submissionId, runResult.exitCode, runResult.timedOut);
+                // exitCode가 0이 아니더라도 'test' 태스크까지 도달했다면(compile성공), RUNTIME_ERROR나 TEST_FAILURE로 보는 것이 타당함.
+                // 여기서는 보수적으로 RUNTIME_ERROR를 반환.
+                return buildFallbackResult(submissionId, runResult.exitCode == 0 ? ScoringStatus.RUNTIME_ERROR : ScoringStatus.RUNTIME_ERROR);
             }
 
             return resultParser.parse(submissionId, resultXmlFiles, runResult.exitCode, request.getTestCases());
@@ -146,8 +149,10 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         Process process = pb.start();
         boolean finished = process.waitFor(300, TimeUnit.SECONDS);
         if (!finished || process.exitValue() != 0) {
-            if (!finished) process.destroyForcibly();
-            log.warn("[DockerCommand] Command failed or timed out: {}", String.join(" ", command));
+            String errorMsg = String.format("[DockerCommand] Command failed or timed out (exit=%d): %s",
+                    finished ? process.exitValue() : -1, String.join(" ", command));
+            log.warn(errorMsg);
+            throw new IOException(errorMsg);
         }
     }
 

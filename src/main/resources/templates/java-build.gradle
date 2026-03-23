@@ -48,6 +48,5 @@ tasks.named('test') {
     systemProperty 'junit.jupiter.displayname.generator.default', 'org.junit.jupiter.api.DisplayNameGenerator$Standard'
     reports {
         junitXml.required = true
-        junitXml.outputLocation = file('/results')
     }
 }
