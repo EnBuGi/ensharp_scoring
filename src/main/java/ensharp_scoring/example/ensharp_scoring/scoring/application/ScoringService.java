@@ -7,8 +7,11 @@ import lombok.extern.slf4j.Slf4j;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.Collections;
 import java.util.List;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import java.io.IOException;
 
 import ensharp_scoring.example.ensharp_scoring.scoring.application.port.in.ScoreSubmissionUseCase;
@@ -162,115 +165,99 @@ public class ScoringService implements ScoreSubmissionUseCase {
 
     private void adjustProjectStructure(Path workspaceDir) {
         try {
-            // 1. src 디렉토리 탐색
-            Path srcDir = findSrcDirectory(workspaceDir);
-            
-            // 2. src가 존재하지 않는 경우 (예: 루트에 바로 .java 파일이 있는 경우)
-            if (srcDir == null) {
-                log.info("[ScoringService] No src directory found. Checking for .java files in root or subdirectories.");
-                // 루트에 소스파일이 있는 것으로 보이면 src/main/java를 생성하여 이동 시도
-                ensureStandardStructure(workspaceDir);
+            log.info("[ScoringService] Starting robust project structure adjustment for workspace: {}", workspaceDir);
+            Path targetMainJava = workspaceDir.resolve("src/main/java");
+            Files.createDirectories(targetMainJava);
+
+            // 1. 모든 .java 파일 찾기 (src/test 내부 파일은 제외하여 학생의 테스트가 소스 영역으로 이동하는 것 방지)
+            List<Path> javaFiles;
+            try (Stream<Path> stream = Files.walk(workspaceDir)) {
+                javaFiles = stream
+                    .filter(p -> p.toString().endsWith(".java"))
+                    .filter(p -> !p.toString().contains("src/test"))
+                    .collect(Collectors.toList());
+            }
+
+            if (javaFiles.isEmpty()) {
+                log.info("[ScoringService] No .java files found in workspace.");
                 return;
             }
 
-            // 3. src가 루트에 있지 않은 경우 (예: Subfolder/src)
-            if (!srcDir.getParent().equals(workspaceDir)) {
-                log.info("[ScoringService] Found src directory at non-root location: {}. Moving to root.", workspaceDir.relativize(srcDir));
-                Path sourceRoot = srcDir.getParent();
-                moveContentsToRoot(sourceRoot, workspaceDir);
-            }
-            
-            // 4. src/main/java 구조가 아닌 경우 (예: src/com/...)
-            Path mainJavaDir = workspaceDir.resolve("src/main/java");
-            if (!Files.exists(mainJavaDir)) {
-                log.info("[ScoringService] src/main/java missing. Attempting to fix standard structure.");
-                // src 아래에 바로 패키지나 파일이 있는 경우를 대비
-                fixSrcStructure(workspaceDir.resolve("src"));
-            }
-            
-        } catch (Exception e) {
-            log.error("[ScoringService] Error adjusting project structure", e);
-        }
-    }
+            // 2. 각 파일의 패키지 분석 후 이동
+            for (Path sourceFile : javaFiles) {
+                String packageName = parsePackageName(sourceFile);
+                Path packagePath = packageName.isEmpty() ? Paths.get("") : Paths.get(packageName.replace(".", "/"));
+                Path targetPath = targetMainJava.resolve(packagePath).resolve(sourceFile.getFileName());
 
-    private void ensureStandardStructure(Path workspaceDir) throws IOException {
-        Path targetDir = workspaceDir.resolve("src/main/java");
-        Files.createDirectories(targetDir);
-        
-        // .java 파일이 포함된 디렉토리를 찾아 targetDir로 이동
-        try (java.util.stream.Stream<Path> stream = Files.walk(workspaceDir)) {
-            List<Path> javaFolders = stream
-                .filter(p -> p.toString().endsWith(".java"))
-                .map(Path::getParent)
-                .distinct()
-                .filter(p -> !p.toString().contains("src/test")) // 테스트는 제외 (나중에 덮어씌움)
-                .sorted((p1, p2) -> p1.toString().length() - p2.toString().length()) // 최상위 폴더 우선
-                .collect(java.util.stream.Collectors.toList());
-            
-            if (!javaFolders.isEmpty()) {
-                Path sourceBase = javaFolders.get(0);
-                log.info("[ScoringService] Moving code from {} to standard structure.", workspaceDir.relativize(sourceBase));
-                moveContentsTo(sourceBase, targetDir);
-            }
-        }
-    }
+                // 이미 올바른 위치에 있는 경우 건너뜀
+                if (sourceFile.toAbsolutePath().equals(targetPath.toAbsolutePath())) {
+                    continue;
+                }
 
-    private void fixSrcStructure(Path srcDir) throws IOException {
-        // src/com/... -> src/main/java/com/...
-        Path mainJavaDir = srcDir.resolve("main/java");
-        
-        try (java.util.stream.Stream<Path> stream = Files.list(srcDir)) {
-            List<Path> items = stream.collect(java.util.stream.Collectors.toList());
-            for (Path item : items) {
-                String name = item.getFileName().toString();
-                if (name.equals("main") || name.equals("test")) continue;
+                Files.createDirectories(targetPath.getParent());
+                log.info("[ScoringService] Moving student code: {} -> {}", workspaceDir.relativize(sourceFile), workspaceDir.relativize(targetPath));
                 
-                Files.createDirectories(mainJavaDir);
-                Path target = mainJavaDir.resolve(name);
-                if (!Files.exists(target)) {
-                    Files.move(item, target);
+                // 이동 시 기존 파일이 있으면 덮어씀 (Standard 구조로 정규화)
+                Files.move(sourceFile, targetPath, StandardCopyOption.REPLACE_EXISTING);
+            }
+            
+            // 3. 빈 디렉토리 정리 (src 제외)
+            cleanUpEmptyDirectories(workspaceDir);
+
+            log.info("[ScoringService] Completed robust project structure adjustment.");
+        } catch (Exception e) {
+            log.error("[ScoringService] Error during robust project structure adjustment", e);
+        }
+    }
+
+    private void cleanUpEmptyDirectories(Path workspaceDir) {
+        try {
+            // 하위 디렉토리부터 삭제하기 위해 depth 순으로 정렬하거나 walk 후 뒤집어서 처리
+            List<Path> directories;
+            try (Stream<Path> stream = Files.walk(workspaceDir)) {
+                directories = stream
+                    .filter(Files::isDirectory)
+                    .filter(p -> !p.equals(workspaceDir))
+                    .filter(p -> !p.toString().contains("src")) // src 폴더 계열은 보존
+                    .sorted((p1, p2) -> p2.toString().length() - p1.toString().length())
+                    .collect(Collectors.toList());
+            }
+
+            for (Path dir : directories) {
+                try (Stream<Path> s = Files.list(dir)) {
+                    if (s.findAny().isEmpty()) {
+                        Files.delete(dir);
+                    }
+                } catch (IOException e) {
+                    log.warn("Failed to delete empty directory: {}", dir);
                 }
             }
+        } catch (IOException e) {
+            log.warn("Error during cleanup of empty directories", e);
         }
     }
 
-    private void moveContentsToRoot(Path sourceRoot, Path workspaceDir) throws IOException {
-        try (java.util.stream.Stream<Path> stream = Files.list(sourceRoot)) {
-            stream.forEach(p -> {
-                try {
-                    Path target = workspaceDir.resolve(sourceRoot.relativize(p));
-                    if (!Files.exists(target)) {
-                        Files.move(p, target);
+    private String parsePackageName(Path javaFile) {
+        // 성능 최적화: 첫 100라인만 읽음
+        try (Stream<String> lines = Files.lines(javaFile).limit(100)) {
+            return lines
+                .map(String::trim)
+                .filter(line -> line.startsWith("package ") && line.endsWith(";"))
+                .map(line -> {
+                    String part = line.substring(8, line.length() - 1).trim();
+                    String pkg = part.split("\\s+")[0];
+                    // 보안: 패키지명에 영문, 숫자, 점만 허용 (Path Traversal 방지)
+                    if (pkg.matches("^[a-zA-Z0-9.]+$")) {
+                        return pkg;
                     }
-                } catch (IOException e) {
-                    log.warn("Failed to move {} to root: {}", p, e.getMessage());
-                }
-            });
-        }
-    }
-
-    private void moveContentsTo(Path source, Path targetDir) throws IOException {
-        try (java.util.stream.Stream<Path> stream = Files.list(source)) {
-            stream.forEach(p -> {
-                try {
-                    Path target = targetDir.resolve(source.relativize(p));
-                    if (!Files.exists(target)) {
-                        Files.move(p, target);
-                    }
-                } catch (IOException e) {
-                    log.warn("Failed to move {} to {}: {}", p, targetDir, e.getMessage());
-                }
-            });
-        }
-    }
-
-    private Path findSrcDirectory(Path startDir) throws IOException {
-        try (java.util.stream.Stream<Path> stream = Files.walk(startDir, 5)) {
-            return stream
-                    .filter(Files::isDirectory)
-                    .filter(p -> p.getFileName().toString().equals("src"))
-                    .findFirst()
-                    .orElse(null);
+                    log.warn("[ScoringService] Invalid package name found: {}", pkg);
+                    return "";
+                })
+                .findFirst()
+                .orElse(""); // default package
+        } catch (IOException e) {
+            log.warn("[ScoringService] Failed to read file for package parsing: {}", javaFile);
+            return "";
         }
     }
 
