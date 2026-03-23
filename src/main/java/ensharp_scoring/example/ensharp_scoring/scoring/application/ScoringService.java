@@ -164,20 +164,25 @@ public class ScoringService implements ScoreSubmissionUseCase {
             Files.createDirectories(targetMainJava);
             Files.createDirectories(targetMainResources);
 
-            // 1. 모든 소스 및 리소스 파일 찾기
-            List<Path> allFiles;
-            try (Stream<Path> stream = Files.walk(workspaceDir)) {
-                allFiles = stream
-                    .filter(Files::isRegularFile)
-                    .filter(p -> !p.toString().contains("src/test")) // 테스트 코드는 별도로 처리
-                    .collect(Collectors.toList());
-            }
-
-            // 2. .java 파일 정규화 및 이동
+            // 1. .java 파일 정규화 및 이동 (src/main/java로 강제 이동 및 패키지 정규화)
             normalizePackage(workspaceDir, "src/main/java");
 
             // 3. 리소스 파일 이동
-            for (Path f : allFiles) {
+            List<Path> resourceFiles;
+            try (Stream<Path> stream = Files.walk(workspaceDir)) {
+                resourceFiles = stream
+                    .filter(Files::isRegularFile)
+                    .filter(p -> !p.toString().endsWith(".java"))
+                    .filter(p -> !p.getFileName().toString().startsWith("._"))
+                    .filter(p -> !p.toString().contains("__MACOSX"))
+                    .filter(p -> !p.toString().contains("src/test")) // 테스트 코드는 별도로 처리
+                    .filter(p -> !p.toString().contains("src/main/resources")) // 이미 src/main/resources에 있는 파일은 제외
+                    .filter(p -> !p.toString().endsWith(".gradle")) // Gradle 빌드 파일 제외
+                    .filter(p -> !p.toString().endsWith(".properties")) // Gradle properties 파일 제외
+                    .collect(Collectors.toList());
+            }
+
+            for (Path f : resourceFiles) {
                 String name = f.getFileName().toString().toLowerCase();
                 if (name.endsWith(".xml") || name.endsWith(".properties") || name.endsWith(".yml") || name.endsWith(".yaml")) {
                     Path targetPath = targetMainResources.resolve(f.getFileName().toString());
