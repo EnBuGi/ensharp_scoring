@@ -1,9 +1,7 @@
 package ensharp_scoring.example.ensharp_scoring.scoring.application;
 
-import org.springframework.stereotype.Service;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-
+import java.io.File;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -12,18 +10,20 @@ import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-import java.io.IOException;
-import java.io.File;
+
+import org.springframework.stereotype.Service;
 
 import ensharp_scoring.example.ensharp_scoring.scoring.application.port.in.ScoreSubmissionUseCase;
 import ensharp_scoring.example.ensharp_scoring.scoring.application.port.out.ExecuteScoringPort;
-import ensharp_scoring.example.ensharp_scoring.scoring.application.port.out.PublishScoringResultPort;
 import ensharp_scoring.example.ensharp_scoring.scoring.application.port.out.FetchSourceCodePort;
 import ensharp_scoring.example.ensharp_scoring.scoring.application.port.out.FetchTestCasePort;
+import ensharp_scoring.example.ensharp_scoring.scoring.application.port.out.PublishScoringResultPort;
 import ensharp_scoring.example.ensharp_scoring.scoring.domain.ScoringRequest;
 import ensharp_scoring.example.ensharp_scoring.scoring.domain.ScoringResult;
 import ensharp_scoring.example.ensharp_scoring.scoring.domain.ScoringStatus;
 import ensharp_scoring.example.ensharp_scoring.scoring.domain.exception.ScoringException;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
 @Service
@@ -36,6 +36,7 @@ public class ScoringService implements ScoreSubmissionUseCase {
     private final PublishScoringResultPort publishScoringResultPort;
 
     private static final String TARGET_PACKAGE = "gs.submission";
+
 
     @Override
     public void score(ScoringRequest request) {
@@ -226,11 +227,9 @@ public class ScoringService implements ScoreSubmissionUseCase {
                     .filter(p -> !p.toString().contains("__MACOSX"))
                     .filter(p -> {
                         String path = p.toString();
-                        // baseDirRelPath가 src/test/java이면 src/test 포함된 파일만 대상으로 함
                         if (baseDirRelPath.contains("test")) {
                             return path.contains("src/test");
                         } else {
-                            // 학생 코드는 src/test가 없는 모든 자바 파일
                             return !path.contains("src/test");
                         }
                     })
@@ -242,6 +241,10 @@ public class ScoringService implements ScoreSubmissionUseCase {
                 return;
             }
 
+            // 3. 원본 패키지 목록 수집 (와일드카드 import 제거용)
+            java.util.Set<String> originalPackages = collectOriginalPackages(targetJavaFiles);
+            log.info("[ScoringService] Collected {} original packages for import filtering", originalPackages.size());
+
             log.info("[ScoringService] Normalizing {} Java files to package {} in {}", targetJavaFiles.size(), TARGET_PACKAGE, baseDirRelPath);
 
             Path targetDir = workspaceDir.resolve(baseDirRelPath).resolve(TARGET_PACKAGE.replace(".", "/"));
@@ -250,7 +253,7 @@ public class ScoringService implements ScoreSubmissionUseCase {
             for (Path sourceFile : targetJavaFiles) {
                 try {
                     String originalContent = Files.readString(sourceFile);
-                    String processedContent = processJavaFileContent(originalContent, projectClassNames, sourceFile.getFileName().toString());
+                    String processedContent = processJavaFileContent(originalContent, projectClassNames, originalPackages, sourceFile.getFileName().toString());
 
                     Path targetFile = targetDir.resolve(sourceFile.getFileName().toString());
                     if (!sourceFile.toAbsolutePath().equals(targetFile.toAbsolutePath())) {
@@ -270,14 +273,29 @@ public class ScoringService implements ScoreSubmissionUseCase {
         }
     }
 
-    private String processJavaFileContent(String originalContent, java.util.Set<String> projectClassNames, String fileName) {
+    private java.util.Set<String> collectOriginalPackages(List<Path> javaFiles) {
+        java.util.Set<String> packages = new java.util.HashSet<>();
+        java.util.regex.Pattern pkgPattern = java.util.regex.Pattern.compile("(?m)^\\s*package\\s+([^;]+);");
+        for (Path file : javaFiles) {
+            try {
+                String content = Files.readString(file);
+                java.util.regex.Matcher m = pkgPattern.matcher(content);
+                if (m.find()) {
+                    packages.add(m.group(1).trim());
+                }
+            } catch (IOException ignored) {}
+        }
+        return packages;
+    }
+
+    String processJavaFileContent(String originalContent, java.util.Set<String> projectClassNames, java.util.Set<String> originalPackages, String fileName) {
         // 1. 패키지 선언 치환 (멀티라인 및 코멘트 대응 강화)
-        String normalizedContent = originalContent.replaceAll("(?m)^\\s*package\\s+[^;]+;", "package " + TARGET_PACKAGE + ";");
+        String normalizedContent = originalContent.replaceAll("(?m)^\\s*package\\s+([^;]+);", "package " + TARGET_PACKAGE + ";");
         if (!normalizedContent.contains("package " + TARGET_PACKAGE + ";")) {
             normalizedContent = "package " + TARGET_PACKAGE + ";\n" + normalizedContent;
         }
 
-        // 2. 내부 클래스 import 문 주석 처리
+        // 2. 내부 클래스 및 패키지 import 문 주석 처리
         StringBuilder finalContent = new StringBuilder();
         String[] lines = normalizedContent.split("\n");
         int commentedCount = 0;
@@ -286,10 +304,23 @@ public class ScoringService implements ScoreSubmissionUseCase {
             String trimmed = line.trim();
             if (trimmed.startsWith("import ") && trimmed.endsWith(";")) {
                 String imp = trimmed.substring(7, trimmed.length() - 1).trim();
+                
+                // 와일드카드 import 처리 (예: import draw.*;)
+                if (imp.endsWith(".*")) {
+                    String pkgName = imp.substring(0, imp.length() - 2);
+                    if (originalPackages.contains(pkgName)) {
+                        finalContent.append("// Redundant wildcard import removed: ").append(line).append("\n");
+                        commentedCount++;
+                        continue;
+                    }
+                }
+
+                // 특정 클래스 import 처리 (예: import draw.Shape;)
                 int lastDot = imp.lastIndexOf('.');
                 if (lastDot != -1) {
                     String className = imp.substring(lastDot + 1);
-                    if (projectClassNames.contains(className)) {
+                    String pkgName = imp.substring(0, lastDot);
+                    if (projectClassNames.contains(className) || originalPackages.contains(pkgName)) {
                         finalContent.append("// Redundant internal import removed: ").append(line).append("\n");
                         commentedCount++;
                         continue;
@@ -305,6 +336,7 @@ public class ScoringService implements ScoreSubmissionUseCase {
 
         return finalContent.toString();
     }
+
 
     private void clearOldArtifacts(Path workspaceDir) {
         String[] targets = {"src/test", "build", "bin", "out", "__MACOSX"};
