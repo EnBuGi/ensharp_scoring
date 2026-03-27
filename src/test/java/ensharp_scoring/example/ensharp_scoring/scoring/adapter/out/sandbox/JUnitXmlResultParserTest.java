@@ -2,12 +2,14 @@ package ensharp_scoring.example.ensharp_scoring.scoring.adapter.out.sandbox;
 
 import ensharp_scoring.example.ensharp_scoring.scoring.domain.ScoringResult;
 import ensharp_scoring.example.ensharp_scoring.scoring.domain.ScoringStatus;
+import ensharp_scoring.example.ensharp_scoring.scoring.domain.TestDetail;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.util.Collections;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -39,7 +41,7 @@ class JUnitXmlResultParserTest {
         }
 
         // When
-        ScoringResult result = parser.parse("sub-123", java.util.List.of(tempXml), 1);
+        ScoringResult result = parser.parse("sub-123", java.util.List.of(tempXml), 1, Collections.emptyList());
 
         // Then
         assertThat(result.getSubmissionId()).isEqualTo("sub-123");
@@ -47,7 +49,11 @@ class JUnitXmlResultParserTest {
         assertThat(result.getTotalTests()).isEqualTo(3);
         assertThat(result.getPassedTests()).isEqualTo(2);
         assertThat(result.getDetails()).hasSize(3);
-        assertThat(result.getDetails().get(1).getStatus()).isEqualTo("FAILED");
+        // Check if () is correctly appended to method names
+        assertThat(result.getDetails().stream().map(TestDetail::getMethodName))
+                .containsExactlyInAnyOrder("testSum()", "testDiff()", "testMult()");
+        assertThat(result.getDetails().stream().filter(d -> d.getMethodName().equals("testDiff()")).findFirst().get().getStatus())
+                .isEqualTo("FAILED");
     }
     
     @Test
@@ -71,7 +77,7 @@ class JUnitXmlResultParserTest {
         }
 
         // When
-        ScoringResult result = parser.parse("sub-456", java.util.List.of(tempXml), 0);
+        ScoringResult result = parser.parse("sub-456", java.util.List.of(tempXml), 0, Collections.emptyList());
 
         // Then
         assertThat(result.getSubmissionId()).isEqualTo("sub-456");
@@ -79,6 +85,7 @@ class JUnitXmlResultParserTest {
         assertThat(result.getTotalTests()).isEqualTo(2);
         assertThat(result.getPassedTests()).isEqualTo(2);
         assertThat(result.getDetails()).hasSize(2);
-        assertThat(result.getDetails().get(0).getStatus()).isEqualTo("PASSED");
+        assertThat(result.getDetails().stream().map(TestDetail::getMethodName))
+                .containsExactlyInAnyOrder("testSum()", "testDiff()");
     }
 }

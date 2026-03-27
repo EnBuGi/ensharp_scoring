@@ -77,7 +77,7 @@ class ScoringServiceTest {
         scoringService.score(request);
 
         // Then
-        verify(fetchSourceCodePort).fetch(eq("https://github.com/repo"), any(Path.class));
+        verify(fetchSourceCodePort).fetch(eq("https://github.com/repo"), any(Path.class), any());
         verify(fetchTestCasePort).fetch(eq("https://s3/test.zip"), any(Path.class));
         verify(executeScoringPort).execute(request);
         verify(publishScoringResultPort).publish(mockResult);
@@ -90,13 +90,13 @@ class ScoringServiceTest {
         ScoringRequest request = createScoringRequest();
 
         doThrow(new ScoringException("Failed to download code"))
-                .when(fetchSourceCodePort).fetch(any(String.class), any(Path.class));
+                .when(fetchSourceCodePort).fetch(any(String.class), any(Path.class), any());
 
         // When
         scoringService.score(request);
 
         // Then
-        verify(fetchSourceCodePort).fetch(any(String.class), any(Path.class));
+        verify(fetchSourceCodePort).fetch(any(String.class), any(Path.class), any());
         
         // 뒷 단계들은 실행되지 않아야 함
         verify(fetchTestCasePort, never()).fetch(any(String.class), any(Path.class));
@@ -116,7 +116,7 @@ class ScoringServiceTest {
         ScoringRequest request = createScoringRequest();
 
         doThrow(new RuntimeException("Unknown Disk Error"))
-                .when(fetchSourceCodePort).fetch(any(String.class), any(Path.class));
+                .when(fetchSourceCodePort).fetch(any(String.class), any(Path.class), any());
 
         // When
         scoringService.score(request);

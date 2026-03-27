@@ -2,7 +2,9 @@ package ensharp_scoring.example.ensharp_scoring.scoring.adapter.out.sandbox;
 
 import ensharp_scoring.example.ensharp_scoring.scoring.domain.ScoringResult;
 import ensharp_scoring.example.ensharp_scoring.scoring.domain.ScoringStatus;
+import ensharp_scoring.example.ensharp_scoring.scoring.domain.TestCaseDto;
 import ensharp_scoring.example.ensharp_scoring.scoring.domain.TestDetail;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import javax.xml.parsers.DocumentBuilder;
@@ -13,42 +15,30 @@ import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 import java.io.File;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
+@Slf4j
 @Component
 public class JUnitXmlResultParser {
 
-    public ScoringResult parse(String submissionId, List<File> xmlFiles, int exitCode) {
-        List<TestDetail> details = new ArrayList<>();
-        int totalTestsCount = 0;
-        int failedTestsCount = 0;
-        int errorTestsCount = 0;
+    public ScoringResult parse(String submissionId, List<File> xmlFiles, int exitCode, List<TestCaseDto> allowedTestCases) {
+        log.info("[JUnitXmlResultParser] Starting parse: submissionId={}, exitCode={}, xmlFilesCount={}", 
+                submissionId, exitCode, xmlFiles.size());
+        
+        // 1. Parse all XML results into a map for easy lookup
+        Map<String, TestDetail> allResultsMap = new HashMap<>();
 
         for (File xmlFile : xmlFiles) {
             try {
                 if (xmlFile != null && xmlFile.exists()) {
+                    log.debug("[JUnitXmlResultParser] Parsing file: {}", xmlFile.getName());
                     DocumentBuilderFactory dbFactory = DocumentBuilderFactory.newInstance();
                     DocumentBuilder dBuilder = dbFactory.newDocumentBuilder();
                     Document doc = dBuilder.parse(xmlFile);
                     doc.getDocumentElement().normalize();
 
-                    NodeList testSuiteList = doc.getElementsByTagName("testsuite");
-                    
-                    for (int i = 0; i < testSuiteList.getLength(); i++) {
-                        Node testSuiteNode = testSuiteList.item(i);
-                        if (testSuiteNode.getNodeType() == Node.ELEMENT_NODE) {
-                            Element testSuiteElement = (Element) testSuiteNode;
-                            
-                            try {
-                                totalTestsCount += Integer.parseInt(testSuiteElement.getAttribute("tests"));
-                                failedTestsCount += Integer.parseInt(testSuiteElement.getAttribute("failures"));
-                                errorTestsCount += Integer.parseInt(testSuiteElement.getAttribute("errors"));
-                            } catch (NumberFormatException e) {
-                                // Ignore parsing issues for attributes and continue with elements
-                            }
-                        }
-                    }
-                    
                     NodeList testCaseList = doc.getElementsByTagName("testcase");
                     
                     for (int i = 0; i < testCaseList.getLength(); i++) {
@@ -56,14 +46,25 @@ public class JUnitXmlResultParser {
                         if (testCaseNode.getNodeType() == Node.ELEMENT_NODE) {
                             Element testCaseElement = (Element) testCaseNode;
                             
-                            // methodName 속성이 있으면 그것을 우선 사용 (JUnit 5 + Gradle 조합에서 displayName 대신 메서드명을 얻기 위함)
                             String methodNameAttr = testCaseElement.getAttribute("methodName");
                             String nameAttr = testCaseElement.getAttribute("name");
                             String className = testCaseElement.getAttribute("classname");
                             
-                            String finalMethodName = (methodNameAttr != null && !methodNameAttr.isEmpty()) 
-                                    ? methodNameAttr 
-                                    : (nameAttr != null && !nameAttr.isEmpty() ? nameAttr : className);
+                            // Prioritize 'name' attribute (includes '()' for methods) to match apiServer's refined parsing.
+                            // Fallback to 'methodName' or 'classname'.
+                            String rawName = (nameAttr != null && !nameAttr.isEmpty()) 
+                                    ? nameAttr 
+                                    : (methodNameAttr != null && !methodNameAttr.isEmpty() ? methodNameAttr : className);
+                            
+                            // Match apiServer's behavior: append "()" to method names if not present.
+                            // We assume it's a method if it's not the classname and doesn't have "()".
+                            String actualMethodName = rawName;
+                            if (rawName != null && !rawName.equals(className) && !rawName.contains("(")) {
+                                actualMethodName = rawName + "()";
+                            }
+                            
+                            log.info("[JUnitXmlResultParser] Parsed test case: rawName='{}', actualMethodName='{}', className='{}'", 
+                                    rawName, actualMethodName, className);
                             
                             boolean isFailure = testCaseElement.getElementsByTagName("failure").getLength() > 0;
                             boolean isError = testCaseElement.getElementsByTagName("error").getLength() > 0;
@@ -77,10 +78,11 @@ public class JUnitXmlResultParser {
                             }
                             
                             boolean passed = !isFailure && !isError && !isSkipped;
-                            
-                            details.add(TestDetail.builder()
-                                    .methodName(finalMethodName)
-                                    .status(passed ? "PASSED" : (isFailure ? "FAILED" : (isError ? "ERROR" : "SKIPPED")))
+                            String status = passed ? "PASSED" : (isFailure ? "FAILED" : (isError ? "ERROR" : "SKIPPED"));
+
+                            allResultsMap.put(actualMethodName, TestDetail.builder()
+                                    .methodName(actualMethodName)
+                                    .status(status)
                                     .durationMs(0L)
                                     .message(message)
                                     .build());
@@ -88,28 +90,64 @@ public class JUnitXmlResultParser {
                     }
                 }
             } catch (Exception e) {
-                // Log parsing error for this specific file, but continue with others
-                failedTestsCount++; 
+                log.error("[JUnitXmlResultParser] Error parsing XML file {}: {}", xmlFile != null ? xmlFile.getName() : "null", e.getMessage());
             }
         }
 
-        boolean hasFailures = failedTestsCount > 0 || errorTestsCount > 0;
-        ScoringStatus status;
-        
-        if (hasFailures) {
-            status = ScoringStatus.WRONG_ANSWER;
-        } else if (exitCode != 0) {
-            status = ScoringStatus.RUNTIME_ERROR;
+        // 2. Filter based on allowedTestCases
+        List<TestDetail> filteredDetails = new ArrayList<>();
+        int passedCount = 0;
+
+        log.info("[JUnitXmlResultParser] All identified results in XML: {}", allResultsMap.keySet());
+
+        if (allowedTestCases == null || allowedTestCases.isEmpty()) {
+            log.info("[JUnitXmlResultParser] allowedTestCases is empty, returning all found results");
+            for (TestDetail detail : allResultsMap.values()) {
+                filteredDetails.add(detail);
+                if ("PASSED".equals(detail.getStatus())) {
+                    passedCount++;
+                }
+            }
         } else {
-            status = ScoringStatus.ACCEPTED;
+            log.info("[JUnitXmlResultParser] Filtering results based on {} allowed test cases", allowedTestCases.size());
+            for (TestCaseDto allowed : allowedTestCases) {
+                String targetName = allowed.getName();
+                TestDetail result = allResultsMap.get(targetName);
+                if (result != null) {
+                    log.info("[JUnitXmlResultParser] Match found: targetName='{}', status='{}'", targetName, result.getStatus());
+                    filteredDetails.add(result);
+                    if ("PASSED".equals(result.getStatus())) {
+                        passedCount++;
+                    }
+                } else {
+                    log.warn("[JUnitXmlResultParser] Match NOT found: targetName='{}'", targetName);
+                    // Test case allowed by mentor but not found in execution (zip doesn't have it)
+                    filteredDetails.add(TestDetail.builder()
+                            .methodName(targetName)
+                            .status("FAILED")
+                            .message("Test case not found in execution results.")
+                            .build());
+                }
+            }
         }
+
+        ScoringStatus overallStatus = (filteredDetails.isEmpty() || passedCount < filteredDetails.size()) 
+                ? ScoringStatus.WRONG_ANSWER 
+                : ScoringStatus.ACCEPTED;
+        
+        if (exitCode != 0 && passedCount == filteredDetails.size()) {
+            overallStatus = ScoringStatus.RUNTIME_ERROR;
+        }
+
+        log.info("[JUnitXmlResultParser] Final result: passedCount={}, total={}, status={}", 
+                passedCount, filteredDetails.size(), overallStatus);
 
         return ScoringResult.builder()
                 .submissionId(submissionId)
-                .overallStatus(status)
-                .totalTests(totalTestsCount > 0 ? totalTestsCount : details.size())
-                .passedTests(totalTestsCount > 0 ? (totalTestsCount - failedTestsCount - errorTestsCount) : (int) details.stream().filter(d -> "PASSED".equals(d.getStatus())).count())
-                .details(details)
+                .overallStatus(overallStatus)
+                .totalTests(filteredDetails.size())
+                .passedTests(passedCount)
+                .details(filteredDetails)
                 .build();
     }
 }
