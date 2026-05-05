@@ -113,8 +113,13 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         
         // Mount writable volumes for Gradle/Java requirements
         command.add("--tmpfs"); command.add("/tmp:rw,size=128m");
-        command.add("--tmpfs"); command.add("/workspace:rw,mode=777,size=512m");
         command.add("--tmpfs"); command.add("/home/gradle:rw,mode=777,size=128m");
+        
+        // Use an anonymous volume for the workspace. 
+        // Anonymous volumes are writable even when the container is not running, 
+        // allowing 'docker cp' to work with --read-only.
+        command.add("-v");
+        command.add("/workspace");
         
         // Custom cache mount (must be writable even if image is pre-warmed)
         command.add("--volume");
