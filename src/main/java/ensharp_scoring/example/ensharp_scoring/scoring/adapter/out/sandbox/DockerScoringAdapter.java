@@ -113,7 +113,7 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         
         // Mount writable volumes for Gradle/Java requirements
         command.add("--tmpfs"); command.add("/tmp:rw,size=128m");
-        command.add("--tmpfs"); command.add("/home/gradle/.gradle:rw,mode=777,size=512m");
+        command.add("--tmpfs"); command.add("/home/gradle/.gradle:rw,exec,mode=777,size=512m");
         
         // Use an anonymous volume for the workspace. 
         // Anonymous volumes are writable even when the container is not running, 
@@ -133,9 +133,8 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         
         command.add("sh");
         command.add("-c");
-        command.add("cp -as /gradle-user-home-cache/. /home/gradle/.gradle/ || true; " +
-                   "find /home/gradle/.gradle -name \"*.lock\" -delete; " +
-                   "export GRADLE_USER_HOME=/home/gradle/.gradle; " +
+        command.add("cp -R /gradle-user-home-cache/. /home/gradle/.gradle/ && " +
+                   "export GRADLE_USER_HOME=/home/gradle/.gradle && " +
                    "gradle test --offline --no-daemon " +
                    "-PtestMaxHeapSize=" + request.getMemoryLimit() + "m " +
                    "-Dorg.gradle.jvmargs=\"-Xmx128m\" " +
