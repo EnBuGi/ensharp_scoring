@@ -113,7 +113,7 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         
         // Mount writable volumes for Gradle/Java requirements
         command.add("--tmpfs"); command.add("/tmp:rw,size=128m");
-        command.add("--tmpfs"); command.add("/home/gradle:rw,mode=777,size=128m");
+        command.add("--tmpfs"); command.add("/home/gradle:rw,mode=777,size=256m");
         
         // Use an anonymous volume for the workspace. 
         // Anonymous volumes are writable even when the container is not running, 
@@ -121,10 +121,6 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         command.add("-v");
         command.add("/workspace");
         
-        // Custom cache mount (must be writable even if image is pre-warmed)
-        command.add("--volume");
-        command.add("gradle-cache:/gradle-user-home-cache:rw");
-
         command.add("-w");
         command.add("/workspace");
         command.add("--user");
@@ -137,8 +133,11 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         
         command.add("sh");
         command.add("-c");
-        command.add("export GRADLE_USER_HOME=/gradle-user-home-cache && " +
-                   "gradle test --no-daemon " +
+        command.add("mkdir -p /home/gradle/.gradle && " +
+                   "ln -s /gradle-user-home-cache/caches /home/gradle/.gradle/caches && " +
+                   "ln -s /gradle-user-home-cache/wrapper /home/gradle/.gradle/wrapper && " +
+                   "export GRADLE_USER_HOME=/home/gradle/.gradle && " +
+                   "gradle test --offline --no-daemon " +
                    "-PtestMaxHeapSize=" + request.getMemoryLimit() + "m " +
                    "-Dorg.gradle.jvmargs=\"-Xmx128m\" " +
                    "-Dorg.gradle.native=false -Dorg.gradle.vfs.watch=false -Dorg.gradle.daemon=false -Dorg.gradle.welcome=never");
