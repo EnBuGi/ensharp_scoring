@@ -43,7 +43,7 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
             // 2. 워크스페이스 파일 복사
             log.info("[DockerScoring] Step 2: Copying workspace to container");
             String workspacePath = "/tmp/workspace/" + submissionId + "/.";
-            runCommand(List.of("docker", "cp", workspacePath, containerName + ":/home/gradle/app/"));
+            runCommand(List.of("docker", "cp", workspacePath, containerName + ":/workspace/"));
 
             // 3. 실행 및 채점 (로그 캡처)
             log.info("[DockerScoring] Step 3: Running grading task");
@@ -53,7 +53,7 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
             // 4. 결과 파일 추출
             log.info("[DockerScoring] Step 4: Extracting results from container");
             try {
-                runCommand(List.of("docker", "cp", containerName + ":/home/gradle/app/build/test-results/test/.", resultsDir.getAbsolutePath()));
+                runCommand(List.of("docker", "cp", containerName + ":/workspace/build/test-results/test/.", resultsDir.getAbsolutePath()));
             } catch (Exception e) {
                 log.warn("[DockerScoring] Failed to extract XML results: {}", e.getMessage());
             }
