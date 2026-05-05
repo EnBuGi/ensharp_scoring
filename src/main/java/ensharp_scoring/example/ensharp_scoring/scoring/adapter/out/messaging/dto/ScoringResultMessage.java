@@ -15,6 +15,7 @@ public class ScoringResultMessage {
     private int totalTests;
     private int passedTests;
     private List<TestDetailMessage> details;
+    private String buildLog;
 
     public static ScoringResultMessage from(ScoringResult domain) {
         return ScoringResultMessage.builder()
@@ -25,6 +26,7 @@ public class ScoringResultMessage {
                 .details(domain.getDetails() != null ? 
                         domain.getDetails().stream().map(TestDetailMessage::from).collect(Collectors.toList()) 
                         : null)
+                .buildLog(domain.getBuildLog())
                 .build();
     }
 }

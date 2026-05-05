@@ -41,7 +41,7 @@ class JUnitXmlResultParserTest {
         }
 
         // When
-        ScoringResult result = parser.parse("sub-123", java.util.List.of(tempXml), 1, Collections.emptyList());
+        ScoringResult result = parser.parse("sub-123", java.util.List.of(tempXml), 1, Collections.emptyList(), "");
 
         // Then
         assertThat(result.getSubmissionId()).isEqualTo("sub-123");
@@ -77,7 +77,7 @@ class JUnitXmlResultParserTest {
         }
 
         // When
-        ScoringResult result = parser.parse("sub-456", java.util.List.of(tempXml), 0, Collections.emptyList());
+        ScoringResult result = parser.parse("sub-456", java.util.List.of(tempXml), 0, Collections.emptyList(), "");
 
         // Then
         assertThat(result.getSubmissionId()).isEqualTo("sub-456");
