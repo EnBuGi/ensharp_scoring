@@ -112,15 +112,16 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         command.add("--read-only");   // Security: Read-only root filesystem
         
         // Mount writable volumes for Gradle/Java requirements
-        command.add("--tmpfs"); command.add("/tmp");
-        command.add("--tmpfs"); command.add("/home/gradle"); // Entire home directory as writable memory
+        command.add("--tmpfs"); command.add("/tmp:rw,size=128m");
+        command.add("--tmpfs"); command.add("/workspace:rw,mode=777,size=512m");
+        command.add("--tmpfs"); command.add("/home/gradle:rw,mode=777,size=128m");
         
         // Custom cache mount (must be writable even if image is pre-warmed)
         command.add("--volume");
         command.add("gradle-cache:/gradle-user-home-cache:rw");
 
         command.add("-w");
-        command.add("/home/gradle/app");
+        command.add("/workspace");
         command.add("--user");
         command.add("gradle");
         
