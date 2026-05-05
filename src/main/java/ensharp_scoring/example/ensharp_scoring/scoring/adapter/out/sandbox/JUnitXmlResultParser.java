@@ -23,7 +23,7 @@ import java.util.Map;
 @Component
 public class JUnitXmlResultParser {
 
-    public ScoringResult parse(String submissionId, List<File> xmlFiles, int exitCode, List<TestCaseDto> allowedTestCases) {
+    public ScoringResult parse(String submissionId, List<File> xmlFiles, int exitCode, List<TestCaseDto> allowedTestCases, String buildLog) {
         log.info("[JUnitXmlResultParser] Starting parse: submissionId={}, exitCode={}, xmlFilesCount={}", 
                 submissionId, exitCode, xmlFiles.size());
         
@@ -35,6 +35,14 @@ public class JUnitXmlResultParser {
                 if (xmlFile != null && xmlFile.exists()) {
                     log.debug("[JUnitXmlResultParser] Parsing file: {}", xmlFile.getName());
                     DocumentBuilderFactory dbFactory = DocumentBuilderFactory.newInstance();
+                    // Security: Disable external entities to prevent XXE
+                    dbFactory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+                    dbFactory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+                    dbFactory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+                    dbFactory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+                    dbFactory.setXIncludeAware(false);
+                    dbFactory.setExpandEntityReferences(false);
+                    
                     DocumentBuilder dBuilder = dbFactory.newDocumentBuilder();
                     Document doc = dBuilder.parse(xmlFile);
                     doc.getDocumentElement().normalize();
@@ -131,15 +139,26 @@ public class JUnitXmlResultParser {
             }
         }
 
-        ScoringStatus overallStatus = (filteredDetails.isEmpty() || passedCount < filteredDetails.size()) 
-                ? ScoringStatus.WRONG_ANSWER 
-                : ScoringStatus.ACCEPTED;
+        ScoringStatus overallStatus;
+        if (filteredDetails.isEmpty()) {
+            overallStatus = (exitCode == 0) ? ScoringStatus.ACCEPTED : ScoringStatus.RUNTIME_ERROR;
+        } else if (passedCount < filteredDetails.size()) {
+            overallStatus = ScoringStatus.WRONG_ANSWER;
+        } else {
+            overallStatus = ScoringStatus.ACCEPTED;
+        }
         
-        if (exitCode != 0 && passedCount == filteredDetails.size()) {
-            overallStatus = ScoringStatus.RUNTIME_ERROR;
+        // If exit code is non-zero (e.g., 1 or 137), but all tests passed in XML,
+        // it means the JVM crashed after/during tests. This is a RUNTIME_ERROR.
+        if (exitCode != 0 && overallStatus == ScoringStatus.ACCEPTED) {
+            if (exitCode == 137 || buildLog.contains("OutMemoryError")) {
+                overallStatus = ScoringStatus.MEMORY_LIMIT_EXCEEDED;
+            } else {
+                overallStatus = ScoringStatus.RUNTIME_ERROR;
+            }
         }
 
-        log.info("[JUnitXmlResultParser] Final result: passedCount={}, total={}, status={}", 
+        log.info("[JUnitXmlResultParser] Final result: passedCount={}, total={}, overallStatus={}", 
                 passedCount, filteredDetails.size(), overallStatus);
 
         return ScoringResult.builder()
@@ -148,6 +167,12 @@ public class JUnitXmlResultParser {
                 .totalTests(filteredDetails.size())
                 .passedTests(passedCount)
                 .details(filteredDetails)
+                .buildLog(truncateLog(buildLog))
                 .build();
+    }
+
+    private String truncateLog(String log) {
+        if (log == null || log.length() < 10000) return log;
+        return log.substring(0, 5000) + "\n... [TRUNCATED] ...\n" + log.substring(log.length() - 5000);
     }
 }

@@ -22,18 +22,32 @@ import ensharp_scoring.example.ensharp_scoring.scoring.domain.ScoringRequest;
 import ensharp_scoring.example.ensharp_scoring.scoring.domain.ScoringResult;
 import ensharp_scoring.example.ensharp_scoring.scoring.domain.ScoringStatus;
 import ensharp_scoring.example.ensharp_scoring.scoring.domain.exception.ScoringException;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class ScoringService implements ScoreSubmissionUseCase {
 
     private final FetchSourceCodePort fetchSourceCodePort;
     private final FetchTestCasePort fetchTestCasePort;
     private final ExecuteScoringPort executeScoringPort;
     private final PublishScoringResultPort publishScoringResultPort;
+    
+    private final String workspaceBaseDir;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public ScoringService(
+            FetchSourceCodePort fetchSourceCodePort,
+            FetchTestCasePort fetchTestCasePort,
+            ExecuteScoringPort executeScoringPort,
+            PublishScoringResultPort publishScoringResultPort,
+            @org.springframework.beans.factory.annotation.Value("${scoring.workspace.base-dir:/tmp/workspace}") String workspaceBaseDir) {
+        this.fetchSourceCodePort = fetchSourceCodePort;
+        this.fetchTestCasePort = fetchTestCasePort;
+        this.executeScoringPort = executeScoringPort;
+        this.publishScoringResultPort = publishScoringResultPort;
+        this.workspaceBaseDir = workspaceBaseDir;
+    }
 
     private static final String TARGET_PACKAGE = "gs.submission";
 
@@ -41,7 +55,7 @@ public class ScoringService implements ScoreSubmissionUseCase {
     @Override
     public void score(ScoringRequest request) {
         String submissionId = request.getSubmissionId();
-        Path workspaceDir = Paths.get("/tmp/workspace", submissionId);
+        Path workspaceDir = Paths.get(workspaceBaseDir, submissionId);
         
         try {
             // 1. 작업 디렉토리 생성
@@ -50,38 +64,34 @@ public class ScoringService implements ScoreSubmissionUseCase {
             // 2. 깃허브 코드 클론
             fetchSourceCodePort.fetch(request.getRepoUrl(), workspaceDir, request.getGithubAccessToken());
             
-            // [New] 권한 설정
+            // 권한 설정
             setWorkspacePermissions(workspaceDir);
 
-            // [New] 기존 아티팩트 제거 (기존 src/test, build 등 삭제하여 학생 코드와 충돌 방지)
-            log.info("[ScoringService] Cleaning up workspace (src/test, build, bin) before processing student code");
+            // 기존 아티팩트 제거
             clearOldArtifacts(workspaceDir);
 
-            // 3. 학생 코드 구조 조정 및 패키지 정규화
-            log.info("[ScoringService] Normalizing student source code package to {}", TARGET_PACKAGE);
-            adjustProjectStructure(workspaceDir);
+            // 3. [Conditional] 패키지 정규화 (순수 Java 과제일 때만 수행)
+            // Spring Boot 과제는 패키지 구조가 중요하므로 정규화를 수행하지 않음
+            if ("JAVA".equalsIgnoreCase(request.getProjectType())) {
+                log.info("[ScoringService] Normalizing package structure to {} for JAVA project", TARGET_PACKAGE);
+                normalizePackageStructure(workspaceDir);
+            } else {
+                log.info("[ScoringService] Skipping package normalization for SPRING project to preserve structure");
+            }
 
             // 4. 테스트 케이스 다운로드 및 압축 해제
             if (request.getTestCodeUrl() == null || request.getTestCodeUrl().isBlank()) {
-                log.error("[ScoringService] Test case URL is missing for submission: {}", submissionId);
                 throw new ScoringException("Test case URL is missing for submission: " + submissionId);
             }
 
             fetchTestCasePort.fetch(request.getTestCodeUrl(), workspaceDir);
-            
-            // [New] 테스트 코드 페치 후 권한 재설정
             setWorkspacePermissions(workspaceDir);
 
-            // [New] 테스트 코드도 패키지 정규화 수행 (학생 코드와 동일한 패키지로 통합)
-            log.info("[ScoringService] Normalizing test code package to {}", TARGET_PACKAGE);
-            normalizePackage(workspaceDir, "src/test/java");
+            // 테스트 코드는 제공된 구조 그대로 사용 (gs.submission 패키지 준수 가정)
+            log.info("[ScoringService] Successfully fetched test cases");
             
-            log.info("[ScoringService] Successfully fetched and normalized test cases");
-            
-            // 5. Gradle 빌드 파일 생성
-            generateGradleFiles(workspaceDir, request.getProjectType());
-            
-            // [New] 최종 권한 확인 (Docker 실행 직전)
+            // 5. 프로젝트 파일(Gradle, H2 Config 등) 생성
+            generateProjectFiles(workspaceDir, request.getProjectType());
             setWorkspacePermissions(workspaceDir);
 
             // 6. 채점(도커) 실행
@@ -98,6 +108,7 @@ public class ScoringService implements ScoreSubmissionUseCase {
                 .totalTests(0)
                 .passedTests(0)
                 .details(Collections.emptyList())
+                .buildLog("Scoring exception: " + e.getMessage())
                 .build();
             publishScoringResultPort.publish(errorResult);
         } catch (Exception e) {
@@ -108,6 +119,7 @@ public class ScoringService implements ScoreSubmissionUseCase {
                 .totalTests(0)
                 .passedTests(0)
                 .details(Collections.emptyList())
+                .buildLog("Unexpected error: " + e.getMessage())
                 .build();
             publishScoringResultPort.publish(errorResult);
         } finally {
@@ -119,222 +131,128 @@ public class ScoringService implements ScoreSubmissionUseCase {
         }
     }
 
-    private void generateGradleFiles(Path workspaceDir, String projectType) throws Exception {
-        Path buildGradlePath = workspaceDir.resolve("build.gradle");
-        Path settingsGradlePath = workspaceDir.resolve("settings.gradle");
+    private void normalizePackageStructure(Path workspaceDir) {
+        try {
+            // 리소스 파일 정리 (src/main/resources로 이동)
+            organizeResources(workspaceDir);
 
-        // 1. settings.gradle 생성 (Gradle 8.7+ 필수)
-        if (!Files.exists(settingsGradlePath)) {
-            Files.writeString(settingsGradlePath, "rootProject.name = 'submission'\n");
-            log.info("Generated settings.gradle in workspace.");
-        }
-        
-        // 2. gradle.properties 생성
-        Path gradlePropertiesPath = workspaceDir.resolve("gradle.properties");
-        if (!Files.exists(gradlePropertiesPath)) {
-            String propertiesContent = "org.gradle.native=false\n" +
-                                     "org.gradle.vfs.watch=false\n" +
-                                     "org.gradle.daemon=false\n" +
-                                     "gradle.user.home=/home/gradle/.gradle\n" +
-                                     "org.gradle.jvmargs=-Xmx256m -XX:MaxMetaspaceSize=128m\n" +
-                                     "org.gradle.welcome=never\n";
-            Files.writeString(gradlePropertiesPath, propertiesContent);
-            log.info("Generated gradle.properties in workspace.");
-        }
+            // 소스 코드 정규화
+            Path mainSourceDir = workspaceDir.resolve("src/main/java");
+            if (Files.exists(mainSourceDir)) {
+                normalizePackage(mainSourceDir, TARGET_PACKAGE);
+            }
 
-        // 3. build.gradle 생성
-        String templatePath = "SPRING".equalsIgnoreCase(projectType) 
-                ? "templates/spring-build.gradle" 
-                : "templates/java-build.gradle";
+            // 테스트 코드 정규화 (제출물 내부에 테스트가 포함된 경우)
+            Path testSourceDir = workspaceDir.resolve("src/test/java");
+            if (Files.exists(testSourceDir)) {
+                normalizePackage(testSourceDir, TARGET_PACKAGE);
+            }
 
-        try (var inputStream = new org.springframework.core.io.ClassPathResource(templatePath).getInputStream()) {
-            String template = org.springframework.util.StreamUtils.copyToString(inputStream, java.nio.charset.StandardCharsets.UTF_8);
-            Files.writeString(buildGradlePath, template);
-            log.info("[ScoringService] Forcefully generated build.gradle for project type: {} using template: {}", projectType, templatePath);
+            log.info("[ScoringService] Package normalization complete.");
         } catch (Exception e) {
-            log.error("Failed to read build.gradle template: {}", templatePath, e);
-            throw new ScoringException("Failed to generate build.gradle from template: " + templatePath, e);
+            log.error("[ScoringService] Error during package normalization", e);
+            throw new ScoringException("소스 코드 전처리 중 오류가 발생했습니다: " + e.getMessage());
         }
     }
 
-    private void adjustProjectStructure(Path workspaceDir) {
-        try {
-            log.info("[ScoringService] Starting flexible project structure adjustment for student code");
-            Path targetMainJava = workspaceDir.resolve("src/main/java");
-            Path targetMainResources = workspaceDir.resolve("src/main/resources");
-            Files.createDirectories(targetMainJava);
-            Files.createDirectories(targetMainResources);
+    private void normalizePackage(Path sourceBaseDir, String targetPackage) throws IOException {
+        Path targetDir = sourceBaseDir.resolve(targetPackage.replace(".", "/"));
+        Files.createDirectories(targetDir);
 
-            // 1. .java 파일 정규화 및 이동 (src/main/java로 강제 이동 및 패키지 정규화)
-            normalizePackage(workspaceDir, "src/main/java");
+        List<Path> javaFiles;
+        try (Stream<Path> stream = Files.walk(sourceBaseDir)) {
+            javaFiles = stream
+                .filter(Files::isRegularFile)
+                .filter(p -> p.toString().endsWith(".java"))
+                // 이미 타겟 디렉토리에 있는 파일은 제외
+                .filter(p -> !p.getParent().equals(targetDir))
+                .collect(Collectors.toList());
+        }
 
-            // 3. 리소스 파일 이동
-            List<Path> resourceFiles;
-            try (Stream<Path> stream = Files.walk(workspaceDir)) {
-                resourceFiles = stream
-                    .filter(Files::isRegularFile)
-                    .filter(p -> !p.toString().endsWith(".java"))
-                    .filter(p -> !p.getFileName().toString().startsWith("._"))
-                    .filter(p -> !p.toString().contains("__MACOSX"))
-                    .filter(p -> !p.toString().contains("src/test")) // 테스트 코드는 별도로 처리
-                    .filter(p -> !p.toString().contains("src/main/resources")) // 이미 src/main/resources에 있는 파일은 제외
-                    .filter(p -> !p.toString().endsWith(".gradle")) // Gradle 빌드 파일 제외
-                    .filter(p -> !p.toString().endsWith(".properties")) // Gradle properties 파일 제외
-                    .collect(Collectors.toList());
+        log.info("[ScoringService] Found {} java files to normalize in {}", javaFiles.size(), sourceBaseDir);
+
+        for (Path file : javaFiles) {
+            log.info("[ScoringService] Normalizing file: {}", file);
+            String content = Files.readString(file);
+            
+            // 1. 기존 패키지명 추출 및 정규화
+            String originalPackage = "";
+            java.util.regex.Pattern pkgPattern = java.util.regex.Pattern.compile("package\\s+([a-zA-Z0-9._]+);");
+            java.util.regex.Matcher pkgMatcher = pkgPattern.matcher(content);
+            if (pkgMatcher.find()) {
+                originalPackage = pkgMatcher.group(1);
+                content = pkgMatcher.replaceAll("package " + targetPackage + ";");
+            } else {
+                content = "package " + targetPackage + ";\n\n" + content;
             }
+
+            // 2. 내부 패키지 import 제거 (단일 패키지로 합쳤으므로)
+            if (!originalPackage.isEmpty()) {
+                content = content.replaceAll("import\\s+" + originalPackage + "\\.[a-zA-Z0-9._*]+;", "");
+            }
+            // 추가로 gs.submission 하위 import도 제거 (안전장치)
+            content = content.replaceAll("import\\s+" + targetPackage + "\\.[a-zA-Z0-9._*]+;", "");
+
+            Path targetFile = targetDir.resolve(file.getFileName());
+            log.info("[ScoringService] Writing normalized file to: {}", targetFile);
+            
+            // 파일명이 겹칠 경우 (다른 패키지의 같은 클래스명) - 일단 덮어씀 (코딩테스트 특성상 드묾)
+            Files.writeString(targetFile, content);
+            
+            if (!file.equals(targetFile)) {
+                log.info("[ScoringService] Deleting original file: {}", file);
+                Files.delete(file);
+            }
+        }
+
+        // 빈 디렉토리 정리
+        cleanEmptyDirectories(sourceBaseDir, targetDir);
+    }
+
+    private void cleanEmptyDirectories(Path root, Path exclude) throws IOException {
+        try (Stream<Path> stream = Files.walk(root)) {
+            List<Path> dirs = stream
+                .filter(Files::isDirectory)
+                .filter(p -> !p.equals(root))
+                .filter(p -> !p.startsWith(exclude))
+                .sorted((p1, p2) -> p2.toString().length() - p1.toString().length()) // 하위 디렉토리부터
+                .collect(Collectors.toList());
+
+            for (Path dir : dirs) {
+                try (Stream<Path> s = Files.list(dir)) {
+                    if (s.findAny().isEmpty()) {
+                        Files.delete(dir);
+                    }
+                }
+            }
+        }
+    }
+
+    private void organizeResources(Path workspaceDir) throws IOException {
+        Path targetMainResources = workspaceDir.resolve("src/main/resources");
+        Files.createDirectories(targetMainResources);
+
+        try (Stream<Path> stream = Files.walk(workspaceDir)) {
+            List<Path> resourceFiles = stream
+                .filter(Files::isRegularFile)
+                .filter(p -> !p.toString().endsWith(".java"))
+                .filter(p -> !p.getFileName().toString().startsWith("._"))
+                .filter(p -> !p.toString().contains("__MACOSX"))
+                .filter(p -> !p.toString().contains("src/test"))
+                .filter(p -> !p.toString().contains("src/main/resources"))
+                .filter(p -> {
+                    String name = p.getFileName().toString().toLowerCase();
+                    return name.endsWith(".xml") || name.endsWith(".properties") || name.endsWith(".yml") || name.endsWith(".yaml") || name.endsWith(".json");
+                })
+                .collect(Collectors.toList());
 
             for (Path f : resourceFiles) {
-                String name = f.getFileName().toString().toLowerCase();
-                if (name.endsWith(".xml") || name.endsWith(".properties") || name.endsWith(".yml") || name.endsWith(".yaml")) {
-                    Path targetPath = targetMainResources.resolve(f.getFileName().toString());
-                    if (!f.equals(targetPath)) {
-                        Files.createDirectories(targetPath.getParent());
-                        Files.move(f, targetPath, StandardCopyOption.REPLACE_EXISTING);
-                    }
+                Path targetPath = targetMainResources.resolve(f.getFileName().toString());
+                if (!f.equals(targetPath)) {
+                    Files.move(f, targetPath, StandardCopyOption.REPLACE_EXISTING);
                 }
             }
-            
-            cleanUpEmptyDirectories(workspaceDir);
-            log.info("[ScoringService] Completed student code structure adjustment.");
-        } catch (Exception e) {
-            log.error("[ScoringService] Error during project structure adjustment", e);
         }
-    }
-
-    private void normalizePackage(Path workspaceDir, String baseDirRelPath) {
-        try {
-            log.info("[ScoringService] Starting normalization for target path: {}", baseDirRelPath);
-
-            // 1. 전체 워크스페이스에서 모든 클래스 이름 수집 (import 제거용)
-            java.util.Set<String> projectClassNames;
-            try (Stream<Path> stream = Files.walk(workspaceDir)) {
-                projectClassNames = stream
-                    .filter(p -> p.toString().endsWith(".java"))
-                    .filter(p -> !p.getFileName().toString().startsWith("._"))
-                    .filter(p -> !p.toString().contains("__MACOSX"))
-                    .map(p -> p.getFileName().toString().replace(".java", ""))
-                    .collect(java.util.stream.Collectors.toSet());
-            }
-
-            log.info("[ScoringService] Collected {} class names from workspace for import filtering", projectClassNames.size());
-
-            // 2. 현재 대상 디렉토리(baseDirRelPath)에 해당하는 Java 파일 탐색
-            List<Path> targetJavaFiles;
-            try (Stream<Path> stream = Files.walk(workspaceDir)) {
-                targetJavaFiles = stream
-                    .filter(p -> p.toString().endsWith(".java"))
-                    .filter(p -> !p.getFileName().toString().startsWith("._"))
-                    .filter(p -> !p.toString().contains("__MACOSX"))
-                    .filter(p -> {
-                        String path = p.toString();
-                        if (baseDirRelPath.contains("test")) {
-                            return path.contains("src/test");
-                        } else {
-                            return !path.contains("src/test");
-                        }
-                    })
-                    .collect(Collectors.toList());
-            }
-
-            if (targetJavaFiles.isEmpty()) {
-                log.info("[ScoringService] No Java files found to normalize for path: {}", baseDirRelPath);
-                return;
-            }
-
-            // 3. 원본 패키지 목록 수집 (와일드카드 import 제거용)
-            java.util.Set<String> originalPackages = collectOriginalPackages(targetJavaFiles);
-            log.info("[ScoringService] Collected {} original packages for import filtering", originalPackages.size());
-
-            log.info("[ScoringService] Normalizing {} Java files to package {} in {}", targetJavaFiles.size(), TARGET_PACKAGE, baseDirRelPath);
-
-            Path targetDir = workspaceDir.resolve(baseDirRelPath).resolve(TARGET_PACKAGE.replace(".", "/"));
-            Files.createDirectories(targetDir);
-
-            for (Path sourceFile : targetJavaFiles) {
-                try {
-                    String originalContent = Files.readString(sourceFile);
-                    String processedContent = processJavaFileContent(originalContent, projectClassNames, originalPackages, sourceFile.getFileName().toString());
-
-                    Path targetFile = targetDir.resolve(sourceFile.getFileName().toString());
-                    if (!sourceFile.toAbsolutePath().equals(targetFile.toAbsolutePath())) {
-                        Files.writeString(targetFile, processedContent);
-                        Files.delete(sourceFile);
-                        log.info("[ScoringService] [MOV] {} -> {}", sourceFile.getFileName(), targetFile.toAbsolutePath());
-                    } else {
-                        Files.writeString(sourceFile, processedContent);
-                        log.info("[ScoringService] [FIX] Normalized in-place: {}", sourceFile.getFileName());
-                    }
-                } catch (Exception e) {
-                    log.error("[ScoringService] Failed to process file: {}", sourceFile, e);
-                }
-            }
-        } catch (IOException e) {
-            log.error("[ScoringService] Package normalization failed for path: {}", baseDirRelPath, e);
-        }
-    }
-
-    private java.util.Set<String> collectOriginalPackages(List<Path> javaFiles) {
-        java.util.Set<String> packages = new java.util.HashSet<>();
-        java.util.regex.Pattern pkgPattern = java.util.regex.Pattern.compile("(?m)^\\s*package\\s+([^;]+);");
-        for (Path file : javaFiles) {
-            try {
-                String content = Files.readString(file);
-                java.util.regex.Matcher m = pkgPattern.matcher(content);
-                if (m.find()) {
-                    packages.add(m.group(1).trim());
-                }
-            } catch (IOException ignored) {}
-        }
-        return packages;
-    }
-
-    String processJavaFileContent(String originalContent, java.util.Set<String> projectClassNames, java.util.Set<String> originalPackages, String fileName) {
-        // 1. 패키지 선언 치환 (멀티라인 및 코멘트 대응 강화)
-        String normalizedContent = originalContent.replaceAll("(?m)^\\s*package\\s+([^;]+);", "package " + TARGET_PACKAGE + ";");
-        if (!normalizedContent.contains("package " + TARGET_PACKAGE + ";")) {
-            normalizedContent = "package " + TARGET_PACKAGE + ";\n" + normalizedContent;
-        }
-
-        // 2. 내부 클래스 및 패키지 import 문 주석 처리
-        StringBuilder finalContent = new StringBuilder();
-        String[] lines = normalizedContent.split("\n");
-        int commentedCount = 0;
-        
-        for (String line : lines) {
-            String trimmed = line.trim();
-            if (trimmed.startsWith("import ") && trimmed.endsWith(";")) {
-                String imp = trimmed.substring(7, trimmed.length() - 1).trim();
-                
-                // 와일드카드 import 처리 (예: import draw.*;)
-                if (imp.endsWith(".*")) {
-                    String pkgName = imp.substring(0, imp.length() - 2);
-                    if (originalPackages.contains(pkgName)) {
-                        finalContent.append("// Redundant wildcard import removed: ").append(line).append("\n");
-                        commentedCount++;
-                        continue;
-                    }
-                }
-
-                // 특정 클래스 import 처리 (예: import draw.Shape;)
-                int lastDot = imp.lastIndexOf('.');
-                if (lastDot != -1) {
-                    String className = imp.substring(lastDot + 1);
-                    String pkgName = imp.substring(0, lastDot);
-                    if (projectClassNames.contains(className) || originalPackages.contains(pkgName)) {
-                        finalContent.append("// Redundant internal import removed: ").append(line).append("\n");
-                        commentedCount++;
-                        continue;
-                    }
-                }
-            }
-            finalContent.append(line).append("\n");
-        }
-
-        if (commentedCount > 0) {
-            log.info("[ScoringService] File {}: Commented out {} internal imports", fileName, commentedCount);
-        }
-
-        return finalContent.toString();
     }
 
 
@@ -352,47 +270,54 @@ public class ScoringService implements ScoreSubmissionUseCase {
         }
     }
 
-    private void cleanUpEmptyDirectories(Path workspaceDir) {
-        try {
-            List<Path> directories;
-            try (Stream<Path> stream = Files.walk(workspaceDir)) {
-                directories = stream
-                    .filter(Files::isDirectory)
-                    .filter(p -> !p.equals(workspaceDir))
-                    .filter(p -> !p.toString().contains("src")) 
-                    .sorted((p1, p2) -> p2.toString().length() - p1.toString().length())
-                    .collect(Collectors.toList());
-            }
-
-            for (Path dir : directories) {
-                try (Stream<Path> s = Files.list(dir)) {
-                    if (!s.findAny().isPresent()) {
-                        Files.delete(dir);
-                    }
-                } catch (IOException e) {
-                    log.warn("Failed to delete empty directory: {}", dir);
-                }
-            }
+    private void setWorkspacePermissions(Path workspaceDir) {
+        log.info("[ScoringService] Setting workspace permissions: {}", workspaceDir);
+        try (Stream<Path> stream = Files.walk(workspaceDir)) {
+            stream.forEach(p -> {
+                File file = p.toFile();
+                file.setWritable(true, false);
+                file.setReadable(true, false);
+                file.setExecutable(true, false);
+            });
         } catch (IOException e) {
-            log.warn("Error during cleanup of empty directories", e);
+            log.error("[ScoringService] Error setting permissions", e);
         }
     }
 
-    private void setWorkspacePermissions(Path workspaceDir) {
-        log.info("[ScoringService] Setting 777 permissions for workspace: {}", workspaceDir);
-        try (Stream<Path> stream = Files.walk(workspaceDir)) {
-            stream.forEach(p -> {
-                try {
-                    File file = p.toFile();
-                    file.setWritable(true, false);
-                    file.setReadable(true, false);
-                    file.setExecutable(true, false);
-                } catch (Exception e) {
-                    log.warn("[ScoringService] Failed to set permissions for: {}", p);
-                }
-            });
-        } catch (IOException e) {
-            log.error("[ScoringService] Error while setting workspace permissions", e);
+    private void generateProjectFiles(Path workspaceDir, String projectType) throws Exception {
+        Files.writeString(workspaceDir.resolve("settings.gradle"), "rootProject.name = 'submission'\n");
+        
+        String propertiesContent = "org.gradle.daemon=false\norg.gradle.jvmargs=-Xmx256m\n";
+        Files.writeString(workspaceDir.resolve("gradle.properties"), propertiesContent);
+
+        String templatePath = "SPRING".equalsIgnoreCase(projectType) ? "templates/spring-build.gradle" : "templates/java-build.gradle";
+        try (var inputStream = new org.springframework.core.io.ClassPathResource(templatePath).getInputStream()) {
+            String template = org.springframework.util.StreamUtils.copyToString(inputStream, java.nio.charset.StandardCharsets.UTF_8);
+            Files.writeString(workspaceDir.resolve("build.gradle"), template);
         }
+
+        generateH2Configuration(workspaceDir);
+    }
+
+    private void generateH2Configuration(Path workspaceDir) throws IOException {
+        Path testResourceDir = workspaceDir.resolve("src/test/resources");
+        Files.createDirectories(testResourceDir);
+        
+        String h2Config = "spring:\n" +
+                "  datasource:\n" +
+                "    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1\n" +
+                "    driver-class-name: org.h2.Driver\n" +
+                "    username: root\n" +
+                "    password: \n" +
+                "  jpa:\n" +
+                "    hibernate:\n" +
+                "      ddl-auto: update\n" +
+                "    show-sql: true\n" +
+                "  h2:\n" +
+                "    console:\n" +
+                "      enabled: true\n";
+        
+        Files.writeString(testResourceDir.resolve("application.yml"), h2Config);
+        log.info("[ScoringService] Generated H2 configuration in src/test/resources/application.yml");
     }
 }
