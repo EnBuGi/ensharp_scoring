@@ -28,7 +28,7 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
     public ScoringResult execute(ScoringRequest request) {
         String submissionId = request.getSubmissionId();
         String containerName = "sandbox-" + submissionId;
-        long timeoutMs = request.getTimeLimit() + 5000;
+        long timeoutMs = request.getTimeLimit() + 10000; // Increased buffer for safety
         
         File resultsDir = new File("/tmp/results/" + submissionId);
         if (!resultsDir.exists()) {
@@ -40,14 +40,13 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
             log.info("[DockerScoring] Step 1: Creating container {}", containerName);
             runCommand(buildCreateCommand(request, containerName));
 
-            // 2. 워크스페이스 파일 복사 (Docker socket을 통해 직접 전송)
+            // 2. 워크스페이스 파일 복사
             log.info("[DockerScoring] Step 2: Copying workspace to container");
             String workspacePath = "/tmp/workspace/" + submissionId + "/.";
             runCommand(List.of("docker", "cp", workspacePath, containerName + ":/home/gradle/app/"));
 
             // 3. 실행 및 채점 (로그 캡처)
-            // --user root 로 실행하므로 별도의 chown 과정 없이 바로 실행 가능
-            log.info("[DockerScoring] Step 3: Running grading task (as root)");
+            log.info("[DockerScoring] Step 3: Running grading task");
             DockerExecutionResult runResult = runCaptureOutput(List.of("docker", "start", "-a", containerName), timeoutMs);
             log.info("[DockerScoring] Grading process finished with exit code: {}", runResult.exitCode);
 
@@ -56,42 +55,42 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
             try {
                 runCommand(List.of("docker", "cp", containerName + ":/home/gradle/app/build/test-results/test/.", resultsDir.getAbsolutePath()));
             } catch (Exception e) {
-                log.warn("[DockerScoring] Failed to extract XML results. Maybe tests failed to run? {}", e.getMessage());
+                log.warn("[DockerScoring] Failed to extract XML results: {}", e.getMessage());
             }
 
             // OOM 또는 타임아웃 처리
             if (runResult.exitCode == 137) {
-                return buildFallbackResult(submissionId, ScoringStatus.MEMORY_LIMIT_EXCEEDED);
+                return buildFallbackResult(submissionId, ScoringStatus.MEMORY_LIMIT_EXCEEDED, runResult.output);
             }
             if (runResult.timedOut) {
-                return buildFallbackResult(submissionId, ScoringStatus.TIME_LIMIT_EXCEEDED);
+                return buildFallbackResult(submissionId, ScoringStatus.TIME_LIMIT_EXCEEDED, runResult.output);
             }
 
-            // 5. 결과 파싱 (모든 XML 파일 수집)
+            // 5. 결과 파싱
             log.info("[DockerScoring] Step 5: Parsing results from XML");
             File[] xmlFiles = resultsDir.listFiles((dir, name) -> name.endsWith(".xml"));
             List<File> resultXmlFiles = new ArrayList<>();
             if (xmlFiles != null) {
-                for (File file : xmlFiles) {
-                    resultXmlFiles.add(file);
-                }
+                Collections.addAll(resultXmlFiles, xmlFiles);
             }
 
             if (resultXmlFiles.isEmpty()) {
-                log.warn("[DockerScoring] No XML results found for submission: {}. ExitCode={}, TimedOut={}", 
-                        submissionId, runResult.exitCode, runResult.timedOut);
-                // exitCode가 0이 아니더라도 'test' 태스크까지 도달했다면(compile성공), RUNTIME_ERROR나 TEST_FAILURE로 보는 것이 타당함.
-                // 여기서는 보수적으로 RUNTIME_ERROR를 반환.
-                return buildFallbackResult(submissionId, runResult.exitCode == 0 ? ScoringStatus.RUNTIME_ERROR : ScoringStatus.RUNTIME_ERROR);
+                log.warn("[DockerScoring] No XML results found. ExitCode={}", runResult.exitCode);
+                // If exit code is non-zero and no XML exists, it's likely a COMPILE_ERROR or a crash before tests.
+                ScoringStatus status = (runResult.exitCode != 0) ? ScoringStatus.COMPILE_ERROR : ScoringStatus.RUNTIME_ERROR;
+                if (runResult.output.contains("Compilation failed")) {
+                    status = ScoringStatus.COMPILE_ERROR;
+                }
+                return buildFallbackResult(submissionId, status, runResult.output);
             }
 
-            return resultParser.parse(submissionId, resultXmlFiles, runResult.exitCode, request.getTestCases());
+            return resultParser.parse(submissionId, resultXmlFiles, runResult.exitCode, request.getTestCases(), runResult.output);
 
         } catch (Exception e) {
             log.error("[DockerScoring] Critical error for submission: {}", submissionId, e);
-            return buildFallbackResult(submissionId, ScoringStatus.RUNTIME_ERROR);
+            return buildFallbackResult(submissionId, ScoringStatus.EXECUTION_ERROR, e.getMessage());
         } finally {
-            // 6. 클린업 (컨테이너 삭제)
+            // 6. 클린업
             log.info("[DockerScoring] Step 6: Cleaning up container and local results");
             try {
                 runCommand(List.of("docker", "rm", "-f", containerName));
@@ -107,36 +106,34 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         command.add("--name");
         command.add(containerName);
         command.add("--memory=" + (request.getMemoryLimit() + 256) + "m");
-        command.add("--network=none");
-        command.add("--pids-limit=1024");
+        command.add("--network=none"); // Security: No network access
+        command.add("--pids-limit=64"); // Security: Prevent fork bombs
+        command.add("--cap-drop=ALL"); // Security: Drop all capabilities
+        command.add("--read-only");   // Security: Read-only root filesystem
+        
+        // Mount writable volumes for Gradle/Java requirements
+        command.add("--tmpfs"); command.add("/tmp");
+        command.add("--tmpfs"); command.add("/home/gradle/.gradle");
+        command.add("--tmpfs"); command.add("/home/gradle/app/build");
+        
+        // Custom cache mount (must be writable even if image is pre-warmed)
+        command.add("--volume");
+        command.add("gradle-cache:/gradle-user-home-cache:rw");
+
         command.add("-w");
         command.add("/home/gradle/app");
-        
-        // root 사용자로 실행하여 권한 문제 해결
         command.add("--user");
-        command.add("root");
+        command.add("gradle"); // Run as non-root user
         
-        String baseImage = request.getProjectType().equalsIgnoreCase("SPRING_BOOT")
-                ? "huri0906/enbug-grading-spring-base-image:v3"
-                : "huri0906/enbug-grading-java-base-image:v3";
+        String baseImage = request.getProjectType().equalsIgnoreCase("SPRING")
+                ? "huri0906/enbug-grading-spring-base-image:v4"
+                : "huri0906/enbug-grading-java-base-image:v4";
         command.add(baseImage);
         
-        // 실행 명령 (start -a 시 실행됨)
-        // ls -la 로 파일 존재 여부 확인
-        // chmod -R 777로 캐시 디렉토리 권한 부여 (root가 lock 파일을 생성할 수 있게 함)
-        // --offline 플래그로 네트워크 없이 캐시 사용 강제
-        // -Dorg.gradle.jvmargs="-Xmx128m" 로 데몬 프로세스 힙 제한 강제 (GRADLE_OPTS보다 우선순위 높음)
         command.add("sh");
         command.add("-c");
-        command.add("echo '--- Runtime Environment ---' && " +
-                   "id && echo \"GRADLE_USER_HOME: /gradle-user-home-cache\" && " +
-                   "echo '--- Workspace Structure ---' && " +
-                   "find . -maxdepth 5 -not -path '*/.*' && " +
-                   "echo '--- Cache Size (/gradle-user-home-cache) ---' && " +
-                   "du -sh /gradle-user-home-cache || true && " +
-                   "chmod -R 777 /gradle-user-home-cache || true && " +
-                   "export GRADLE_USER_HOME=/gradle-user-home-cache && " +
-                   "gradle test --no-daemon --offline " +
+        command.add("export GRADLE_USER_HOME=/gradle-user-home-cache && " +
+                   "gradle test --no-daemon " +
                    "-PtestMaxHeapSize=" + request.getMemoryLimit() + "m " +
                    "-Dorg.gradle.jvmargs=\"-Xmx128m\" " +
                    "-Dorg.gradle.native=false -Dorg.gradle.vfs.watch=false -Dorg.gradle.daemon=false -Dorg.gradle.welcome=never");
@@ -162,38 +159,51 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         Process process = pb.start();
 
         StringBuilder sb = new StringBuilder();
+        int lineCount = 0;
+        int MAX_LINES = 5000;
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
             String line;
             while ((line = reader.readLine()) != null) {
-                log.info("[DockerOutput] {}", line);
-                sb.append(line).append("\n");
+                if (lineCount < MAX_LINES) {
+                    log.info("[DockerOutput] {}", line);
+                    sb.append(line).append("\n");
+                    lineCount++;
+                } else if (lineCount == MAX_LINES) {
+                    String limitMsg = "\n[SYSTEM] Log limit exceeded (5000 lines). Truncating output for stability.";
+                    log.warn(limitMsg);
+                    sb.append(limitMsg).append("\n");
+                    lineCount++; // ensure it only appends once
+                }
             }
         }
 
         boolean finished = process.waitFor(timeoutMs, TimeUnit.MILLISECONDS);
         if (!finished) {
             process.destroyForcibly();
-            return new DockerExecutionResult(137, true);
+            return new DockerExecutionResult(137, true, sb.toString());
         }
-        return new DockerExecutionResult(process.exitValue(), false);
+        return new DockerExecutionResult(process.exitValue(), false, sb.toString());
     }
 
     private static class DockerExecutionResult {
         int exitCode;
         boolean timedOut;
-        DockerExecutionResult(int exitCode, boolean timedOut) {
+        String output;
+        DockerExecutionResult(int exitCode, boolean timedOut, String output) {
             this.exitCode = exitCode;
             this.timedOut = timedOut;
+            this.output = output;
         }
     }
 
-    private ScoringResult buildFallbackResult(String submissionId, ScoringStatus status) {
+    private ScoringResult buildFallbackResult(String submissionId, ScoringStatus status, String log) {
         return ScoringResult.builder()
                 .submissionId(submissionId)
                 .overallStatus(status)
                 .totalTests(0)
                 .passedTests(0)
                 .details(Collections.emptyList())
+                .buildLog(log != null ? log : "")
                 .build();
     }
 }
