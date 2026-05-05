@@ -133,8 +133,8 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         
         command.add("sh");
         command.add("-c");
-        command.add("mkdir -p /home/gradle/.gradle && " +
-                   "ln -s /gradle-user-home-cache/caches /home/gradle/.gradle/caches && " +
+        command.add("mkdir -p /home/gradle/.gradle/caches && " +
+                   "ln -s /gradle-user-home-cache/caches/modules-2 /home/gradle/.gradle/caches/modules-2 && " +
                    "ln -s /gradle-user-home-cache/wrapper /home/gradle/.gradle/wrapper && " +
                    "export GRADLE_USER_HOME=/home/gradle/.gradle && " +
                    "gradle test --offline --no-daemon " +
