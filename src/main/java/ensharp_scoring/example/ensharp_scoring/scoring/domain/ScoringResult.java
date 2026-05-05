@@ -12,4 +12,5 @@ public class ScoringResult {
     private final int totalTests;
     private final int passedTests;
     private final List<TestDetail> details;
+    private final String buildLog;
 }
