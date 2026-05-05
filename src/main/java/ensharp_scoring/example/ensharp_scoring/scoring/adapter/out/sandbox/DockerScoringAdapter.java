@@ -113,8 +113,7 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         
         // Mount writable volumes for Gradle/Java requirements
         command.add("--tmpfs"); command.add("/tmp");
-        command.add("--tmpfs"); command.add("/home/gradle/.gradle");
-        command.add("--tmpfs"); command.add("/home/gradle/app/build");
+        command.add("--tmpfs"); command.add("/home/gradle"); // Entire home directory as writable memory
         
         // Custom cache mount (must be writable even if image is pre-warmed)
         command.add("--volume");
@@ -123,7 +122,7 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         command.add("-w");
         command.add("/home/gradle/app");
         command.add("--user");
-        command.add("gradle"); // Run as non-root user
+        command.add("gradle");
         
         String baseImage = request.getProjectType().equalsIgnoreCase("SPRING")
                 ? "huri0906/enbug-grading-spring-base-image:v4"
