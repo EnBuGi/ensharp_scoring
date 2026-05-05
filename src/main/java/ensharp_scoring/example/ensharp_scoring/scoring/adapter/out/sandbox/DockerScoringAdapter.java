@@ -133,9 +133,8 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         
         command.add("sh");
         command.add("-c");
-        command.add("mkdir -p /home/gradle/.gradle/caches && " +
-                   "ln -s /gradle-user-home-cache/caches/modules-2 /home/gradle/.gradle/caches/modules-2 && " +
-                   "ln -s /gradle-user-home-cache/wrapper /home/gradle/.gradle/wrapper && " +
+        command.add("cp -as /gradle-user-home-cache/. /home/gradle/.gradle/ && " +
+                   "find /home/gradle/.gradle -name \"*.lock\" -delete && " +
                    "export GRADLE_USER_HOME=/home/gradle/.gradle && " +
                    "gradle test --offline --no-daemon " +
                    "-PtestMaxHeapSize=" + request.getMemoryLimit() + "m " +
