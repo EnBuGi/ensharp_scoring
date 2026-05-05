@@ -107,7 +107,7 @@ public class DockerScoringAdapter implements ExecuteScoringPort {
         command.add(containerName);
         command.add("--memory=" + (request.getMemoryLimit() + 256) + "m");
         command.add("--network=none"); // Security: No network access
-        command.add("--pids-limit=64"); // Security: Prevent fork bombs
+        command.add("--pids-limit=128"); // Security: Prevent fork bombs (Increased for Spring Boot)
         command.add("--cap-drop=ALL"); // Security: Drop all capabilities
         command.add("--read-only");   // Security: Read-only root filesystem
         
